@@ -1,0 +1,18 @@
+# Virtual Environments
+venv/
+env/
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Streamlit / Local Configs
+.streamlit/
+
+# OS generated files
+.DS_Store
+Thumbs.db
