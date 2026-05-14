@@ -1,3 +1,6 @@
+# Agent internal files
+.agents/
+
 # Virtual Environments
 venv/
 env/
