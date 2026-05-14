@@ -1,6 +1,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
+import yfinance as yf
 import sys
 import os
 
@@ -24,14 +25,26 @@ def load_and_process_data():
     for tf_code, df in data.items():
         if not df.empty:
             df_ind = calculate_super_bollinger(df)
-            # 時間軸コード(1h/4h/1d)をバックテストエンジンへ渡し、特化型ロジックを適用
             res = run_backtest(df_ind, timeframe=tf_code, volume=10000)
             results[tf_code] = res
         else:
             results[tf_code] = None
+            
+    try:
+        df_goog = yf.Ticker("GOOG").history(period="5y", interval="1d")
+        if not df_goog.empty:
+            df_clean = df_goog[['Open', 'High', 'Low', 'Close']].dropna()
+            df_ind_goog = calculate_super_bollinger(df_clean)
+            res_goog = run_backtest(df_ind_goog, timeframe="1h", volume=100)
+            results["GOOG"] = res_goog
+        else:
+            results["GOOG"] = None
+    except Exception:
+        results["GOOG"] = None
+        
     return results
 
-def render_signal_badge(tf_name: str, res: dict):
+def render_signal_badge(tf_name: str, res: dict, strat_desc: str = ""):
     if res is None:
         st.markdown(f"**{tf_name}**: データなし")
         return
@@ -60,6 +73,14 @@ def render_signal_badge(tf_name: str, res: dict):
         )
         
     st.markdown(f"**{tf_name}**: &nbsp; {badge_html}", unsafe_allow_html=True)
+    if strat_desc:
+        # ポジションアイコンの直下に、インデントされた少し控えめな文字色で戦略を美しく配置
+        st.markdown(
+            f"<div style='color:#b0bec5; font-size:0.85em; margin-left:1rem; margin-bottom:0.6rem;'>"
+            f"↳ 戦略: {strat_desc}"
+            f"</div>",
+            unsafe_allow_html=True
+        )
 
 def main():
     components.html(
@@ -75,8 +96,8 @@ def main():
     
     st.title("📈 スーパーボリンジャー トレード支援エージェント")
     st.markdown(
-        "各時間軸のスーパーボリンジャーチャート（初期表示：最新64本）と、"
-        "独立した売買シグナル判定および特化型モデルの成績を自動更新で統合表示します。"
+        "各時間軸の相場特性に合わせて厳選された特化型ロジック（マルチ・ロジック戦略）による"
+        "独立した売買シグナル判定と成績表を自動更新で統合表示します。"
     )
     
     st.markdown("<hr style='margin-top: 0.5rem; margin-bottom: 1.5rem;'>", unsafe_allow_html=True)
@@ -87,15 +108,19 @@ def main():
     row1_col1, row1_col2 = st.columns(2)
     
     with row1_col1:
-        st.subheader("📊 総合サマリー")
+        st.subheader("📊 為替 総合サマリー (USD/JPY)")
         with st.container(border=True):
-            st.markdown("#### 各時間軸のステータスと成績")
+            st.markdown("#### 各時間軸のステータスと適用戦略")
             
-            render_signal_badge("1時間足", results.get("1h"))
-            st.markdown("<br>", unsafe_allow_html=True)
-            render_signal_badge("4時間足", results.get("4h"))
-            st.markdown("<br>", unsafe_allow_html=True)
-            render_signal_badge("日足", results.get("1d"))
+            strategy_descriptions = {
+                "1h": "入:遅行&+2σ&拡大 ｜ 出:遅行逆転",
+                "4h": "入:遅行&+1σ ｜ 出:1σ割れ",
+                "1d": "入:遅行&+1σ&拡大 ｜ 出:中心線割れ"
+            }
+            
+            render_signal_badge("1時間足", results.get("1h"), strategy_descriptions["1h"])
+            render_signal_badge("4時間足", results.get("4h"), strategy_descriptions["4h"])
+            render_signal_badge("日足", results.get("1d"), strategy_descriptions["1d"])
             
             st.markdown("---")
             
@@ -104,13 +129,7 @@ def main():
                 r = results.get(tf_code)
                 if r:
                     pos = r['current_position']
-                    if pos == 1:
-                        sig_str = "🟢 買い保有中"
-                    elif pos == -1:
-                        sig_str = "🔴 売り保有中"
-                    else:
-                        sig_str = "⚪ ノーポジション"
-                        
+                    sig_str = "🟢 買い保有中" if pos == 1 else "🔴 売り保有中" if pos == -1 else "⚪ ノーポジション"
                     l_cnt = r.get('long_trades', 0)
                     s_cnt = r.get('short_trades', 0)
                     
@@ -129,6 +148,7 @@ def main():
                     })
                     
             df_summary = pd.DataFrame(summary_rows)
+            # 表側からは戦略列を除去し、横幅をスッキリ確保
             st.dataframe(df_summary, hide_index=True, use_container_width=True)
             
     with row1_col2:
@@ -163,6 +183,38 @@ def main():
                 st.plotly_chart(fig_1d, use_container_width=True)
             else:
                 st.info("データがありません。")
+
+    st.markdown("<br><hr>", unsafe_allow_html=True)
+    st.subheader("🇺🇸 米国個別株 トレンド分析 (GOOG)")
+    
+    with st.container(border=True):
+        res_goog = results.get("GOOG")
+        if res_goog:
+            col_g_sum, col_g_chart = st.columns([1, 2])
+            
+            with col_g_sum:
+                st.markdown("#### GOOG 日足ステータス")
+                render_signal_badge("GOOG", res_goog)
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                pos_g = res_goog['current_position']
+                sig_g = "🟢 買い保有中" if pos_g == 1 else "🔴 売り保有中" if pos_g == -1 else "⚪ ノーポジション"
+                l_g = res_goog.get('long_trades', 0)
+                s_g = res_goog.get('short_trades', 0)
+                
+                st.markdown(f"**シグナル判定**: {sig_g}")
+                st.markdown("**適用戦略**: 入:遅行&+2σ&拡大 ｜ 出:遅行逆転 (モメンタム特化)")
+                st.markdown(f"**総取引回数**: {res_goog['total_trades']} 回 (買:{l_g} / 売:{s_g})")
+                st.markdown(f"**勝率**: {res_goog['win_rate']:.1f} %")
+                st.markdown(f"**合計損益**: ${res_goog['total_profit']:,.2f} (単利100株固定)")
+                if res_goog['total_trades'] > 0:
+                    st.markdown(f"**平均損益**: ${res_goog['total_profit']/res_goog['total_trades']:,.2f}")
+                    
+            with col_g_chart:
+                fig_goog = create_super_bollinger_chart(res_goog['df_result'], "GOOG 日足 スーパーボリンジャー")
+                st.plotly_chart(fig_goog, use_container_width=True)
+        else:
+            st.info("GOOGデータがありません。")
 
 if __name__ == "__main__":
     main()
