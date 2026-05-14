@@ -1,21 +1,21 @@
 import pandas as pd
 
-def run_backtest(df: pd.DataFrame, volume: int = 10000) -> dict:
+def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000) -> dict:
     """
     スーパーボリンジャー算出済みのデータフレーム上で売買シミュレーションを実行する。
     
-    前提:
+    適用ロジック: 時間軸別の「平均利益トップモデル」（グリッドサーチ厳選設定）
     - 最大1ポジションの単利運用（ロング・ショート両対応）
-    - 買いエントリー (AND): 終値 > 21期間前高値 ＆ 終値 > +1σ
-    - 買い決済 (AND): 終値 < 21期間前安値 ＆ 終値 < +1σ
-    - 売りエントリー (AND): 終値 < 21期間前安値 ＆ 終値 < -1σ
-    - 売り決済 (AND): 終値 > 21期間前高値 ＆ 終値 > -1σ
-    - コスト(スプレッド・手数料)なし
     
-    戻り値の内訳:
-    - total_trades: 買い＋売りの合算取引回数
-    - long_trades: 買いトレードの回数
-    - short_trades: 売りトレードの回数
+    【1時間足 (1h)】
+    - 新規エントリー: 遅行スパン好転 ＆ 終値 > +2σ ＆ バンド拡大
+    - 決済: 遅行スパン逆転のみ
+    【4時間足 (4h)】
+    - 新規エントリー: 遅行スパン好転 ＆ 終値 > +1σ
+    - 決済: 終値 < +1σ のみ
+    【日足 (1d)】
+    - 新規エントリー: 遅行スパン好転 ＆ 終値 > +1σ ＆ バンド拡大
+    - 決済: 終値 < センターライン(21SMA) のみ
     """
     if df is None or df.empty or 'plus_1sigma' not in df.columns:
         return {
@@ -25,6 +25,11 @@ def run_backtest(df: pd.DataFrame, volume: int = 10000) -> dict:
         }
         
     df = df.copy()
+    
+    # エクスパンション判定用の差分列を作成
+    df['m2s_diff'] = df['minus_2sigma'].diff()
+    df['p2s_diff'] = df['plus_2sigma'].diff()
+    
     df['signal'] = 0
     df['position'] = 0
     df['trade_profit'] = 0.0
@@ -42,7 +47,7 @@ def run_backtest(df: pd.DataFrame, volume: int = 10000) -> dict:
     col_prof = df.columns.get_loc('trade_profit')
     col_cum = df.columns.get_loc('cumulative_profit')
     
-    for i in range(len(df)):
+    for i in range(1, len(df)):
         row = df.iloc[i]
         idx = df.index[i]
         
@@ -52,22 +57,62 @@ def run_backtest(df: pd.DataFrame, volume: int = 10000) -> dict:
         close_p = row['Close']
         plus_1s = row['plus_1sigma']
         minus_1s = row['minus_1sigma']
+        plus_2s = row['plus_2sigma']
+        minus_2s = row['minus_2sigma']
+        center_line = row['center_line']
         past_high = row['past_high_21']
         past_low = row['past_low_21']
         
+        m2s_down = row['m2s_diff'] < 0
+        p2s_up = row['p2s_diff'] > 0
+        
         if current_pos == 0:
-            if close_p > past_high and close_p > plus_1s:
-                current_pos = 1
-                entry_price = close_p
-                entry_time = idx
-                df.iat[i, col_sig] = 1
-            elif close_p < past_low and close_p < minus_1s:
-                current_pos = -1
-                entry_price = close_p
-                entry_time = idx
-                df.iat[i, col_sig] = -1
+            # --- 新規エントリー判定 (時間軸別の特化モデル) ---
+            if timeframe == "1h":
+                if close_p > past_high and close_p > plus_2s and m2s_down:
+                    current_pos = 1
+                    entry_price = close_p
+                    entry_time = idx
+                    df.iat[i, col_sig] = 1
+                elif close_p < past_low and close_p < minus_2s and p2s_up:
+                    current_pos = -1
+                    entry_price = close_p
+                    entry_time = idx
+                    df.iat[i, col_sig] = -1
+            elif timeframe == "4h":
+                if close_p > past_high and close_p > plus_1s:
+                    current_pos = 1
+                    entry_price = close_p
+                    entry_time = idx
+                    df.iat[i, col_sig] = 1
+                elif close_p < past_low and close_p < minus_1s:
+                    current_pos = -1
+                    entry_price = close_p
+                    entry_time = idx
+                    df.iat[i, col_sig] = -1
+            elif timeframe == "1d":
+                if close_p > past_high and close_p > plus_1s and m2s_down:
+                    current_pos = 1
+                    entry_price = close_p
+                    entry_time = idx
+                    df.iat[i, col_sig] = 1
+                elif close_p < past_low and close_p < minus_1s and p2s_up:
+                    current_pos = -1
+                    entry_price = close_p
+                    entry_time = idx
+                    df.iat[i, col_sig] = -1
+                    
         elif current_pos == 1:
-            if close_p < past_low and close_p < plus_1s:
+            # --- 買いポジション決済判定 ---
+            do_exit = False
+            if timeframe == "1h" and close_p < past_low:
+                do_exit = True
+            elif timeframe == "4h" and close_p < plus_1s:
+                do_exit = True
+            elif timeframe == "1d" and close_p < center_line:
+                do_exit = True
+                
+            if do_exit:
                 current_pos = 0
                 exit_price = close_p
                 profit = (exit_price - entry_price) * volume
@@ -78,8 +123,18 @@ def run_backtest(df: pd.DataFrame, volume: int = 10000) -> dict:
                 })
                 df.iat[i, col_sig] = 2
                 df.iat[i, col_prof] = profit
+                
         elif current_pos == -1:
-            if close_p > past_high and close_p > minus_1s:
+            # --- 売りポジション決済判定 ---
+            do_exit = False
+            if timeframe == "1h" and close_p > past_high:
+                do_exit = True
+            elif timeframe == "4h" and close_p > minus_1s:
+                do_exit = True
+            elif timeframe == "1d" and close_p > center_line:
+                do_exit = True
+                
+            if do_exit:
                 current_pos = 0
                 exit_price = close_p
                 profit = (entry_price - exit_price) * volume

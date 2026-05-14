@@ -21,13 +21,14 @@ st.set_page_config(
 def load_and_process_data():
     data = fetch_data(period_1h="730d", period_1d="5y")
     results = {}
-    for tf, df in data.items():
+    for tf_code, df in data.items():
         if not df.empty:
             df_ind = calculate_super_bollinger(df)
-            res = run_backtest(df_ind, volume=10000)
-            results[tf] = res
+            # 時間軸コード(1h/4h/1d)をバックテストエンジンへ渡し、特化型ロジックを適用
+            res = run_backtest(df_ind, timeframe=tf_code, volume=10000)
+            results[tf_code] = res
         else:
-            results[tf] = None
+            results[tf_code] = None
     return results
 
 def render_signal_badge(tf_name: str, res: dict):
@@ -75,7 +76,7 @@ def main():
     st.title("📈 スーパーボリンジャー トレード支援エージェント")
     st.markdown(
         "各時間軸のスーパーボリンジャーチャート（初期表示：最新64本）と、"
-        "独立した売買シグナル判定および成績を自動更新で統合表示します。"
+        "独立した売買シグナル判定および特化型モデルの成績を自動更新で統合表示します。"
     )
     
     st.markdown("<hr style='margin-top: 0.5rem; margin-bottom: 1.5rem;'>", unsafe_allow_html=True)
