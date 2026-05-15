@@ -31,9 +31,9 @@ def run_grid_search(df_ind: pd.DataFrame, volume: int = 10000) -> list[dict]:
     # 3: 2σ
     e3_l = df['Close'] > df['plus_2sigma']
     e3_s = df['Close'] < df['minus_2sigma']
-    # 4: エクスパンション
-    e4_l = df['m2s_diff'] < 0
-    e4_s = df['p2s_diff'] > 0
+    # 4: 本物のエクスパンション (上下に広がる)
+    e4_l = (df['m2s_diff'] < 0) & (df['p2s_diff'] > 0)
+    e4_s = (df['m2s_diff'] < 0) & (df['p2s_diff'] > 0)
     # 5: センターライン傾き
     e5_l = df['cl_diff'] > 0
     e5_s = df['cl_diff'] < 0

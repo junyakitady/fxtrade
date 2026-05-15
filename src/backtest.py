@@ -63,18 +63,20 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000) -
         past_high = row['past_high_21']
         past_low = row['past_low_21']
         
+        # 本物のエクスパンション（バンド幅の拡大）判定: -2σが下向き かつ +2σが上向き
         m2s_down = row['m2s_diff'] < 0
         p2s_up = row['p2s_diff'] > 0
+        is_expansion = m2s_down and p2s_up
         
         if current_pos == 0:
             # --- 新規エントリー判定 (時間軸別の特化モデル) ---
             if timeframe == "1h":
-                if close_p > past_high and close_p > plus_2s and m2s_down:
+                if close_p > past_high and close_p > plus_2s and is_expansion:
                     current_pos = 1
                     entry_price = close_p
                     entry_time = idx
                     df.iat[i, col_sig] = 1
-                elif close_p < past_low and close_p < minus_2s and p2s_up:
+                elif close_p < past_low and close_p < minus_2s and is_expansion:
                     current_pos = -1
                     entry_price = close_p
                     entry_time = idx
@@ -91,12 +93,12 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000) -
                     entry_time = idx
                     df.iat[i, col_sig] = -1
             elif timeframe == "1d":
-                if close_p > past_high and close_p > plus_1s and m2s_down:
+                if close_p > past_high and close_p > plus_1s and is_expansion:
                     current_pos = 1
                     entry_price = close_p
                     entry_time = idx
                     df.iat[i, col_sig] = 1
-                elif close_p < past_low and close_p < minus_1s and p2s_up:
+                elif close_p < past_low and close_p < minus_1s and is_expansion:
                     current_pos = -1
                     entry_price = close_p
                     entry_time = idx

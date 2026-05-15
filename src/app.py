@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import yfinance as yf
 import sys
@@ -83,15 +82,14 @@ def render_signal_badge(tf_name: str, res: dict, strat_desc: str = ""):
         )
 
 def main():
-    components.html(
+    st.html(
         """
         <script>
             setTimeout(function(){
                 window.parent.location.reload();
             }, 3600000);
         </script>
-        """,
-        height=0, width=0
+        """
     )
     
     st.title("📈 スーパーボリンジャー トレード支援エージェント")
@@ -149,7 +147,7 @@ def main():
                     
             df_summary = pd.DataFrame(summary_rows)
             # 表側からは戦略列を除去し、横幅をスッキリ確保
-            st.dataframe(df_summary, hide_index=True, use_container_width=True)
+            st.dataframe(df_summary, hide_index=True, width='stretch')
             
     with row1_col2:
         st.subheader("🕒 1時間足")
@@ -157,7 +155,7 @@ def main():
             res_1h = results.get("1h")
             if res_1h:
                 fig_1h = create_super_bollinger_chart(res_1h['df_result'], "1時間足 スーパーボリンジャー")
-                st.plotly_chart(fig_1h, use_container_width=True)
+                st.plotly_chart(fig_1h, width='stretch')
             else:
                 st.info("データがありません。")
                 
@@ -170,7 +168,7 @@ def main():
             res_4h = results.get("4h")
             if res_4h:
                 fig_4h = create_super_bollinger_chart(res_4h['df_result'], "4時間足 スーパーボリンジャー")
-                st.plotly_chart(fig_4h, use_container_width=True)
+                st.plotly_chart(fig_4h, width='stretch')
             else:
                 st.info("データがありません。")
                 
@@ -180,7 +178,7 @@ def main():
             res_1d = results.get("1d")
             if res_1d:
                 fig_1d = create_super_bollinger_chart(res_1d['df_result'], "日足 スーパーボリンジャー")
-                st.plotly_chart(fig_1d, use_container_width=True)
+                st.plotly_chart(fig_1d, width='stretch')
             else:
                 st.info("データがありません。")
 
@@ -212,7 +210,7 @@ def main():
                     
             with col_g_chart:
                 fig_goog = create_super_bollinger_chart(res_goog['df_result'], "GOOG 日足 スーパーボリンジャー")
-                st.plotly_chart(fig_goog, use_container_width=True)
+                st.plotly_chart(fig_goog, width='stretch')
         else:
             st.info("GOOGデータがありません。")
 
