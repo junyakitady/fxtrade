@@ -1,6 +1,6 @@
 import pandas as pd
 
-def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000) -> dict:
+def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000, initial_capital: float = 1000000) -> dict:
     """
     スーパーボリンジャー算出済みのデータフレーム上で売買シミュレーションを実行する。
     
@@ -21,6 +21,7 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000) -
         return {
             "total_trades": 0, "long_trades": 0, "short_trades": 0,
             "wins": 0, "win_rate": 0.0, "total_profit": 0.0,
+            "profit_factor": 0.0, "max_dd_amount": 0.0, "max_dd_percent": 0.0,
             "current_position": 0, "df_result": pd.DataFrame(), "trades": []
         }
         
@@ -159,6 +160,26 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000) -
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
     total_profit = sum(t['profit'] for t in trades)
     
+    # プロフィットファクター（PF）の計算
+    gross_profit = sum(t['profit'] for t in trades if t['profit'] > 0)
+    gross_loss = sum(abs(t['profit']) for t in trades if t['profit'] < 0)
+    if gross_loss > 0:
+        profit_factor = gross_profit / gross_loss
+    else:
+        profit_factor = float('inf') if gross_profit > 0 else 0.0
+        
+    # 最大ドローダウン（Max DD）の計算
+    equity = initial_capital + df['cumulative_profit']
+    peaks = equity.cummax()
+    drawdowns = peaks - equity
+    max_dd_amount = drawdowns.max()
+    
+    safe_peaks = peaks.replace(0, float('nan'))
+    drawdown_rates = drawdowns / safe_peaks
+    max_dd_percent = drawdown_rates.max() * 100
+    if pd.isna(max_dd_percent):
+        max_dd_percent = 0.0
+        
     return {
         "total_trades": total_trades,
         "long_trades": long_trades,
@@ -166,6 +187,9 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000) -
         "wins": wins,
         "win_rate": win_rate,
         "total_profit": total_profit,
+        "profit_factor": profit_factor,
+        "max_dd_amount": max_dd_amount,
+        "max_dd_percent": max_dd_percent,
         "current_position": current_pos,
         "df_result": df,
         "trades": trades

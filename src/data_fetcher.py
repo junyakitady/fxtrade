@@ -2,23 +2,33 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-def fetch_data(symbol: str = "JPY=X", period_1h: str = "730d", period_1d: str = "5y") -> dict[str, pd.DataFrame]:
+def fetch_data(symbol: str = "JPY=X", period_1h: str = "730d", period_1d: str = "5y", raise_errors: bool = False) -> dict[str, pd.DataFrame]:
     """
     Yahoo FinanceからUSD/JPYの価格データを取得し、
     1時間足、4時間足、日足のデータフレームを生成して返す。
     休場等の欠損データは削除され、ギャップ詰め処理が行われる。
-    API通信エラー時は安全に空のデータフレームへフォールバックする。
+    
+    raise_errors が True の場合、データ取得失敗や空データ受信時に例外を投げます。
+    False の場合は安全に空のデータフレームへフォールバックします。
     """
     ticker = yf.Ticker(symbol)
     
     try:
         df_1h = ticker.history(period=period_1h, interval="1h")
-    except Exception:
+        if raise_errors and (df_1h is None or df_1h.empty):
+            raise ValueError(f"1時間足データが空です。シンボル '{symbol}' の有効性、またはネットワーク接続を確認してください。")
+    except Exception as e:
+        if raise_errors:
+            raise RuntimeError(f"1時間足データ（期間:{period_1h}）の取得中に例外が発生しました: {str(e)}") from e
         df_1h = None
         
     try:
         df_1d = ticker.history(period=period_1d, interval="1d")
-    except Exception:
+        if raise_errors and (df_1d is None or df_1d.empty):
+            raise ValueError(f"日足データが空です。シンボル '{symbol}' の有効性、またはネットワーク接続を確認してください。")
+    except Exception as e:
+        if raise_errors:
+            raise RuntimeError(f"日足データ（期間:{period_1d}）の取得中に例外が発生しました: {str(e)}") from e
         df_1d = None
         
     def clean_df(df: pd.DataFrame) -> pd.DataFrame:

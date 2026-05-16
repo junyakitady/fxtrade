@@ -32,8 +32,9 @@ def run_grid_search(df_ind: pd.DataFrame, volume: int = 10000) -> list[dict]:
     e3_l = df['Close'] > df['plus_2sigma']
     e3_s = df['Close'] < df['minus_2sigma']
     # 4: 本物のエクスパンション (上下に広がる)
-    e4_l = (df['m2s_diff'] < 0) & (df['p2s_diff'] > 0)
-    e4_s = (df['m2s_diff'] < 0) & (df['p2s_diff'] > 0)
+    e4 = (df['m2s_diff'] < 0) & (df['p2s_diff'] > 0)
+    e4_l = e4
+    e4_s = e4
     # 5: センターライン傾き
     e5_l = df['cl_diff'] > 0
     e5_s = df['cl_diff'] < 0
@@ -115,8 +116,11 @@ def run_grid_search(df_ind: pd.DataFrame, volume: int = 10000) -> list[dict]:
                 win_rate = (win_count / trade_count * 100) if trade_count > 0 else 0.0
                 avg_profit = (profit_sum / trade_count) if trade_count > 0 else 0.0
                 
-                e_names = [str(idx + 1) for idx in e_indices]
-                x_names = [str(idx + 6) for idx in x_indices]
+                ENTRY_LABELS = ["1(遅行スパン)", "2(+1σ)", "3(+2σ)", "4(バンド拡大)", "5(中心線傾き)"]
+                EXIT_LABELS = ["6(遅行逆転)", "7(1σ逆値)", "8(中心線割れ)"]
+                
+                e_names = [ENTRY_LABELS[idx] for idx in e_indices]
+                x_names = [EXIT_LABELS[idx] for idx in x_indices]
                 e_str = " AND ".join(e_names)
                 x_str = f" {exit_mode} ".join(x_names) if len(x_names) > 1 else x_names[0]
                 
