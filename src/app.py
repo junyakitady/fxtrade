@@ -85,9 +85,23 @@ def main():
     st.html(
         """
         <script>
+            const lastLoadTime = Date.now();
+            const refreshInterval = 3600000; // 1 hour in ms
+
+            // 1. Reload immediately when returning to active foreground tab after 1 hour
+            document.addEventListener("visibilitychange", function() {
+                if (document.visibilityState === "visible") {
+                    const elapsed = Date.now() - lastLoadTime;
+                    if (elapsed >= refreshInterval) {
+                        window.parent.location.reload();
+                    }
+                }
+            });
+
+            // 2. Active background timer for tabs kept open and in the foreground
             setTimeout(function(){
                 window.parent.location.reload();
-            }, 3600000);
+            }, refreshInterval);
         </script>
         """
     )
