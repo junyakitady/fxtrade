@@ -180,6 +180,19 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000, i
     if pd.isna(max_dd_percent):
         max_dd_percent = 0.0
         
+    # 現在の保有ポジションに関する追加情報を計算
+    current_entry_price = 0.0
+    current_entry_time = None
+    current_unrealized_profit = 0.0
+    
+    if current_pos != 0 and not df.empty:
+        current_entry_price = entry_price
+        current_entry_time = entry_time
+        latest_close = df['Close'].iloc[-1]
+        # 買ポジション(1): (Close - Entry) * Vol
+        # 売ポジション(-1): (Entry - Close) * Vol  -> (Close - Entry) * Vol * (-1) と同等
+        current_unrealized_profit = (latest_close - entry_price) * volume * current_pos
+        
     return {
         "total_trades": total_trades,
         "long_trades": long_trades,
@@ -191,6 +204,9 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000, i
         "max_dd_amount": max_dd_amount,
         "max_dd_percent": max_dd_percent,
         "current_position": current_pos,
+        "current_entry_price": current_entry_price,
+        "current_entry_time": current_entry_time,
+        "current_unrealized_profit": current_unrealized_profit,
         "df_result": df,
         "trades": trades
     }

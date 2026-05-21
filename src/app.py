@@ -43,7 +43,7 @@ def load_and_process_data():
         
     return results
 
-def render_signal_badge(tf_name: str, res: dict, strat_desc: str = ""):
+def render_signal_badge(tf_name: str, res: dict, strat_desc: str = "", is_usd: bool = False):
     if res is None:
         st.markdown(f"**{tf_name}**: データなし")
         return
@@ -71,9 +71,32 @@ def render_signal_badge(tf_name: str, res: dict, strat_desc: str = ""):
             '</span>'
         )
         
-    st.markdown(f"**{tf_name}**: &nbsp; {badge_html}", unsafe_allow_html=True)
+    # 保有ポジションがある場合、エントリー建値とリアルタイム評価損益を表示
+    detail_html = ""
+    if pos_code != 0:
+        entry_price = res.get('current_entry_price', 0.0)
+        unrealized_profit = res.get('current_unrealized_profit', 0.0)
+        
+        if is_usd:
+            entry_str = f"\\${entry_price:,.2f}"
+            profit_str = f"+\\${unrealized_profit:,.2f}" if unrealized_profit >= 0 else f"-\\${abs(unrealized_profit):,.2f}"
+        else:
+            entry_str = f"{entry_price:,.3f}円"
+            profit_str = f"{unrealized_profit:+,.0f}円"
+            
+        profit_color = "#00e676" if unrealized_profit >= 0 else "#ff8a80"
+        
+        detail_html = (
+            f'&nbsp;&nbsp;&nbsp;&nbsp;'
+            f'<span style="font-size:0.9em; color:#cfd8dc;">'
+            f'建値: <b style="color:#ffffff;">{entry_str}</b>'
+            f' &nbsp;➔&nbsp; '
+            f'評価損益: <b style="color:{profit_color}; font-size:1.05em;">{profit_str}</b>'
+            f'</span>'
+        )
+        
+    st.markdown(f"**{tf_name}**: &nbsp; {badge_html}{detail_html}", unsafe_allow_html=True)
     if strat_desc:
-        # ポジションアイコンの直下に、インデントされた少し控えめな文字色で戦略を美しく配置
         st.markdown(
             f"<div style='color:#b0bec5; font-size:0.85em; margin-left:1rem; margin-bottom:0.6rem;'>"
             f"↳ 戦略: {strat_desc}"
@@ -206,7 +229,7 @@ def main():
             
             with col_g_sum:
                 st.markdown("#### GOOG 日足ステータス")
-                render_signal_badge("GOOG", res_goog)
+                render_signal_badge("GOOG", res_goog, is_usd=True)
                 st.markdown("<br>", unsafe_allow_html=True)
                 
                 pos_g = res_goog['current_position']
