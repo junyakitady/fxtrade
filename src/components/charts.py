@@ -14,7 +14,14 @@ def create_super_bollinger_chart(df: pd.DataFrame, title: str = "スーパーボ
         fig.update_layout(title=f"{title} (データなし)", template="plotly_dark")
         return fig
         
-    if "1時間足" in title or "4時間足" in title:
+    # 日中足（1時間足、4時間足など）かどうかの自動判別（タイトル依存の解消）
+    is_intraday = False
+    if isinstance(df.index, pd.DatetimeIndex) and len(df) > 1:
+        median_interval = pd.Series(df.index).diff().median()
+        if median_interval < pd.Timedelta(days=1):
+            is_intraday = True
+            
+    if is_intraday:
         x_strings = []
         base_year = df.index[0].year
         for idx in df.index:
@@ -22,7 +29,10 @@ def create_super_bollinger_chart(df: pd.DataFrame, title: str = "スーパーボ
             unique_str = base_str + ('\u200b' * (idx.year - base_year))
             x_strings.append(unique_str)
     else:
-        x_strings = df.index.strftime('%Y-%m-%d')
+        if isinstance(df.index, pd.DatetimeIndex):
+            x_strings = df.index.strftime('%Y-%m-%d')
+        else:
+            x_strings = [str(idx) for idx in df.index]
         
     # 1. ローソク足
     fig.add_trace(go.Candlestick(

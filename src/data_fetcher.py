@@ -53,7 +53,7 @@ def fetch_data(symbol: str = "JPY=X", period_1h: str = "730d", period_1d: str = 
         
     # 4時間足の生成 (1時間足をリサンプリング)
     if not df_1h_clean.empty:
-        df_4h = df_1h_clean.resample('4h').agg({
+        df_4h = df_1h_clean.resample('4h', closed='left', label='left', origin='start_day').agg({
             'Open': 'first',
             'High': 'max',
             'Low': 'min',
