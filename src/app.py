@@ -148,9 +148,9 @@ def main():
             st.markdown("#### 各時間軸のステータスと適用戦略")
             
             strategy_descriptions = {
-                "1h": "入:遅行&+2σ&拡大 ｜ 出:遅行逆転",
-                "4h": "入:遅行&+1σ ｜ 出:1σ割れ",
-                "1d": "入:遅行&+1σ&拡大 ｜ 出:中心線割れ"
+                "1h": "入: 遅行スパン陽転 & エクスパンション & 終値 > +2σ | 出: 遅行スパン陰転",
+                "4h": "入: 遅行スパン陽転 & エクスパンション & 終値 > +2σ | 出: 遅行スパン陰転",
+                "1d": "入: 遅行スパン陽転 & エクスパンション & 終値 > +1σ | 出: 21MA割れ"
             }
             
             render_signal_badge("1時間足", results.get("1h"), strategy_descriptions["1h"])
@@ -238,7 +238,7 @@ def main():
                 s_g = res_goog.get('short_trades', 0)
                 
                 st.markdown(f"**シグナル判定**: {sig_g}")
-                st.markdown("**適用戦略**: 入:遅行&+2σ&拡大 ｜ 出:遅行逆転 (モメンタム特化)")
+                st.markdown("**適用戦略**: 入: 遅行スパン陽転 & エクスパンション & 終値 > +2σ | 出: 遅行スパン陰転")
                 st.markdown(f"**総取引回数**: {res_goog['total_trades']} 回 (買:{l_g} / 売:{s_g})")
                 st.markdown(f"**勝率**: {res_goog['win_rate']:.1f} %")
                 st.markdown(f"**合計損益**: ${res_goog['total_profit']:,.2f} (単利100株固定)")

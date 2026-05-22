@@ -8,14 +8,14 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000, i
     - 最大1ポジションの単利運用（ロング・ショート両対応）
     
     【1時間足 (1h)】
-    - 新規エントリー: 遅行スパン好転 ＆ 終値 > +2σ ＆ バンド拡大
-    - 決済: 遅行スパン逆転のみ
+    - 新規エントリー: E3 (遅行スパン好転 ＆ バンド拡大 ＆ 終値 > +2σ) - HIGH_LOW基準
+    - 決済: EX1 (遅行スパン逆転)
     【4時間足 (4h)】
-    - 新規エントリー: 遅行スパン好転 ＆ 終値 > +1σ
-    - 決済: 終値 < +1σ のみ
+    - 新規エントリー: E3 (遅行スパン好転 ＆ バンド拡大 ＆ 終値 > +2σ) - HIGH_LOW基準
+    - 決済: EX1 (遅行スパン逆転)
     【日足 (1d)】
-    - 新規エントリー: 遅行スパン好転 ＆ 終値 > +1σ ＆ バンド拡大
-    - 決済: 終値 < センターライン(21SMA) のみ
+    - 新規エントリー: E2 (遅行スパン好転 ＆ バンド拡大 ＆ 終値 > +1σ) - HIGH_LOW基準
+    - 決済: EX5 (遅行スパン逆転 または 終値 < センターライン)
     """
     if df is None or df.empty or 'plus_1sigma' not in df.columns:
         return {
@@ -83,12 +83,12 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000, i
                     entry_time = idx
                     df.iat[i, col_sig] = -1
             elif timeframe == "4h":
-                if close_p > past_high and close_p > plus_1s:
+                if close_p > past_high and close_p > plus_2s and is_expansion:
                     current_pos = 1
                     entry_price = close_p
                     entry_time = idx
                     df.iat[i, col_sig] = 1
-                elif close_p < past_low and close_p < minus_1s:
+                elif close_p < past_low and close_p < minus_2s and is_expansion:
                     current_pos = -1
                     entry_price = close_p
                     entry_time = idx
@@ -110,9 +110,9 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000, i
             do_exit = False
             if timeframe == "1h" and close_p < past_low:
                 do_exit = True
-            elif timeframe == "4h" and close_p < plus_1s:
+            elif timeframe == "4h" and close_p < past_low:
                 do_exit = True
-            elif timeframe == "1d" and close_p < center_line:
+            elif timeframe == "1d" and (close_p < past_low or close_p < center_line):
                 do_exit = True
                 
             if do_exit:
@@ -132,9 +132,9 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000, i
             do_exit = False
             if timeframe == "1h" and close_p > past_high:
                 do_exit = True
-            elif timeframe == "4h" and close_p > minus_1s:
+            elif timeframe == "4h" and close_p > past_high:
                 do_exit = True
-            elif timeframe == "1d" and close_p > center_line:
+            elif timeframe == "1d" and (close_p > past_high or close_p > center_line):
                 do_exit = True
                 
             if do_exit:
