@@ -1,19 +1,27 @@
 import os
+import sys
 from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+
+# 親のsrcディレクトリを追加
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
 from data_loader import get_usd_jpy_data
-from indicators import calculate_super_bollinger
-from backtest_engine import run_backtest
+from indicator import calculate_super_bollinger
+from backtest import run_backtest
 
 REPORTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reports')
 
 # 戦略の説明マッピング
 ENTRY_DESC = {
-    'E1': '遅行スパン陽転 & エクスパンション',
+    'E1': '遅行スパン陽転のみ（エクスパンションなし）',
     'E2': 'E1 & 終値 > +1σ',
-    'E3': 'E1 & 終値 > +2σ'
+    'E3': 'E1 & 終値 > +2σ',
+    'E4': '遅行スパン陽転 & エクスパンション（バンド拡大）',
+    'E5': 'E4 & 終値 > +1σ',
+    'E6': 'E4 & 終値 > +2σ'
 }
 
 EXIT_DESC = {
@@ -39,7 +47,7 @@ def run_all_combinations():
         '1d': '5y'
     }
     
-    entry_strategies = ['E1', 'E2', 'E3']
+    entry_strategies = ['E1', 'E2', 'E3', 'E4', 'E5', 'E6']
     exit_strategies = ['EX1', 'EX2', 'EX3', 'EX4', 'EX5', 'EX6', 'EX7']
     
     all_results = []

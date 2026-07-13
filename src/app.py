@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
 import sys
 import os
 
@@ -19,22 +18,43 @@ st.set_page_config(
 )
 
 def load_and_process_data():
-    data = fetch_data(period_1h="730d", period_1d="5y")
+    data = fetch_data(period_1h="2y", period_1d="5y")
     results = {}
-    for tf_code, df in data.items():
-        if not df.empty:
-            df_ind = calculate_super_bollinger(df)
-            res = run_backtest(df_ind, timeframe=tf_code, volume=10000)
-            results[tf_code] = res
-        else:
-            results[tf_code] = None
-            
+    
+    # 1時間足データの処理
+    df_1h = data.get("1h")
+    if df_1h is not None and not df_1h.empty:
+        df_ind_1h = calculate_super_bollinger(df_1h)
+        # E6 + EX2 (厳選・低DDモデル)
+        results["1h"] = run_backtest(df_ind_1h, timeframe="1h_e6_ex2", volume=10000)
+    else:
+        results["1h"] = None
+        
+    # 4時間足データの処理 (1時間足から自動生成される)
+    df_4h = data.get("4h")
+    if df_4h is not None and not df_4h.empty:
+        df_ind_4h = calculate_super_bollinger(df_4h)
+        # E1 + EX3 (エクスパンションなし)
+        results["4h"] = run_backtest(df_ind_4h, timeframe="4h_e1_ex3", volume=10000)
+    else:
+        results["4h"] = None
+        
+    # 日足データの処理
+    df_1d = data.get("1d")
+    if df_1d is not None and not df_1d.empty:
+        df_ind_1d = calculate_super_bollinger(df_1d)
+        # E2 + EX5 (エクスパンションなし)
+        results["1d"] = run_backtest(df_ind_1d, timeframe="1d_e2_ex5", volume=10000)
+    else:
+        results["1d"] = None
+        
     try:
-        df_goog = yf.Ticker("GOOG").history(period="5y", interval="1d")
-        if not df_goog.empty:
+        goog_data = fetch_data(symbol="GOOG", period_1d="5y", raise_errors=True)
+        df_goog = goog_data.get("1d")
+        if df_goog is not None and not df_goog.empty:
             df_clean = df_goog[['Open', 'High', 'Low', 'Close']].dropna()
             df_ind_goog = calculate_super_bollinger(df_clean)
-            res_goog = run_backtest(df_ind_goog, timeframe="1h", volume=100)
+            res_goog = run_backtest(df_ind_goog, timeframe="goog_e4_ex5", volume=100)
             results["GOOG"] = res_goog
         else:
             results["GOOG"] = None
@@ -43,7 +63,7 @@ def load_and_process_data():
         
     return results
 
-def render_signal_badge(tf_name: str, res: dict, strat_desc: str = "", is_usd: bool = False):
+def render_signal_badge(tf_name: str, res: dict, entry_desc: str = "", exit_desc: str = "", is_usd: bool = False):
     if res is None:
         st.markdown(f"**{tf_name}**: データなし")
         return
@@ -96,47 +116,23 @@ def render_signal_badge(tf_name: str, res: dict, strat_desc: str = "", is_usd: b
         )
         
     st.markdown(f"**{tf_name}**: &nbsp; {badge_html}{detail_html}", unsafe_allow_html=True)
-    if strat_desc:
+    if entry_desc:
+        st.markdown(
+            f"<div style='color:#b0bec5; font-size:0.85em; margin-left:1rem; margin-bottom:0.1rem;'>"
+            f"↳ エントリー: {entry_desc}"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+    if exit_desc:
         st.markdown(
             f"<div style='color:#b0bec5; font-size:0.85em; margin-left:1rem; margin-bottom:0.6rem;'>"
-            f"↳ 戦略: {strat_desc}"
+            f"↳ エグジッド: {exit_desc}"
             f"</div>",
             unsafe_allow_html=True
         )
 
-def main():
-    st.html(
-        """
-        <script>
-            const lastLoadTime = Date.now();
-            const refreshInterval = 3600000; // 1 hour in ms
-
-            // 1. Reload immediately when returning to active foreground tab after 1 hour
-            document.addEventListener("visibilitychange", function() {
-                if (document.visibilityState === "visible") {
-                    const elapsed = Date.now() - lastLoadTime;
-                    if (elapsed >= refreshInterval) {
-                        window.parent.location.reload();
-                    }
-                }
-            });
-
-            // 2. Active background timer for tabs kept open and in the foreground
-            setTimeout(function(){
-                window.parent.location.reload();
-            }, refreshInterval);
-        </script>
-        """
-    )
-    
-    st.title("📈 スーパーボリンジャー トレード支援エージェント")
-    st.markdown(
-        "各時間軸の相場特性に合わせて厳選された特化型ロジック（マルチ・ロジック戦略）による"
-        "独立した売買シグナル判定と成績表を自動更新で統合表示します。"
-    )
-    
-    st.markdown("<hr style='margin-top: 0.5rem; margin-bottom: 1.5rem;'>", unsafe_allow_html=True)
-    
+@st.fragment(run_every=3600)  # 1時間 (3600秒) ごとに自動再評価・再描画
+def render_dashboard():
     with st.spinner("市場データを取得・解析中..."):
         results = load_and_process_data()
         
@@ -148,14 +144,14 @@ def main():
             st.markdown("#### 各時間軸のステータスと適用戦略")
             
             strategy_descriptions = {
-                "1h": "入: 遅行スパン陽転 & エクスパンション & 終値 > +2σ | 出: 遅行スパン陰転",
-                "4h": "入: 遅行スパン陽転 & エクスパンション & 終値 > +2σ | 出: 遅行スパン陰転",
-                "1d": "入: 遅行スパン陽転 & エクスパンション & 終値 > +1σ | 出: 21MA割れ"
+                "1h": {"entry_desc": "遅行スパン陽転 & バンド拡大 & ±2σ 越え", "exit_desc": "±1σ割れ"},
+                "4h": {"entry_desc": "遅行スパン陽転のみ", "exit_desc": "21MA割れ"},
+                "1d": {"entry_desc": "遅行スパン陽転 & ±1σ 越え", "exit_desc": "遅行スパン陰転 or 21MA割れ"}
             }
             
-            render_signal_badge("1時間足", results.get("1h"), strategy_descriptions["1h"])
-            render_signal_badge("4時間足", results.get("4h"), strategy_descriptions["4h"])
-            render_signal_badge("日足", results.get("1d"), strategy_descriptions["1d"])
+            render_signal_badge("1時間足", results.get("1h"), **strategy_descriptions["1h"])
+            render_signal_badge("4時間足", results.get("4h"), **strategy_descriptions["4h"])
+            render_signal_badge("日足", results.get("1d"), **strategy_descriptions["1d"])
             
             st.markdown("---")
             
@@ -191,7 +187,7 @@ def main():
         with st.container(border=True):
             res_1h = results.get("1h")
             if res_1h:
-                fig_1h = create_super_bollinger_chart(res_1h['df_result'], "1時間足 スーパーボリンジャー")
+                fig_1h = create_super_bollinger_chart(res_1h['df_result'], "")
                 st.plotly_chart(fig_1h, width='stretch')
             else:
                 st.info("データがありません。")
@@ -204,7 +200,7 @@ def main():
         with st.container(border=True):
             res_4h = results.get("4h")
             if res_4h:
-                fig_4h = create_super_bollinger_chart(res_4h['df_result'], "4時間足 スーパーボリンジャー")
+                fig_4h = create_super_bollinger_chart(res_4h['df_result'], "")
                 st.plotly_chart(fig_4h, width='stretch')
             else:
                 st.info("データがありません。")
@@ -214,7 +210,7 @@ def main():
         with st.container(border=True):
             res_1d = results.get("1d")
             if res_1d:
-                fig_1d = create_super_bollinger_chart(res_1d['df_result'], "日足 スーパーボリンジャー")
+                fig_1d = create_super_bollinger_chart(res_1d['df_result'], "")
                 st.plotly_chart(fig_1d, width='stretch')
             else:
                 st.info("データがありません。")
@@ -229,27 +225,44 @@ def main():
             
             with col_g_sum:
                 st.markdown("#### GOOG 日足ステータス")
-                render_signal_badge("GOOG", res_goog, is_usd=True)
+                
+                strategy_descriptions_goog = {
+                    "entry_desc": "遅行スパン陽転（終値比較） & バンド拡大",
+                    "exit_desc": "遅行スパン陰転（終値比較） or 21MA割れ"
+                }
+                
+                render_signal_badge("GOOG", res_goog, **strategy_descriptions_goog, is_usd=True)
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                pos_g = res_goog['current_position']
-                sig_g = "🟢 買い保有中" if pos_g == 1 else "🔴 売り保有中" if pos_g == -1 else "⚪ ノーポジション"
                 l_g = res_goog.get('long_trades', 0)
                 s_g = res_goog.get('short_trades', 0)
                 
-                st.markdown(f"**シグナル判定**: {sig_g}")
-                st.markdown("**適用戦略**: 入: 遅行スパン陽転 & エクスパンション & 終値 > +2σ | 出: 遅行スパン陰転")
-                st.markdown(f"**総取引回数**: {res_goog['total_trades']} 回 (買:{l_g} / 売:{s_g})")
-                st.markdown(f"**勝率**: {res_goog['win_rate']:.1f} %")
-                st.markdown(f"**合計損益**: ${res_goog['total_profit']:,.2f} (単利100株固定)")
-                if res_goog['total_trades'] > 0:
-                    st.markdown(f"**平均損益**: ${res_goog['total_profit']/res_goog['total_trades']:,.2f}")
+                summary_goog_rows = [{
+                    "銘柄": "GOOG",
+                    "総取引回数 (買/売)": f"{res_goog['total_trades']} 回 (買:{l_g} / 売:{s_g})",
+                    "勝率": f"{res_goog['win_rate']:.1f} %",
+                    "損益合計": f"${res_goog['total_profit']:,.2f}"
+                }]
+                df_g_summary = pd.DataFrame(summary_goog_rows)
+                st.dataframe(df_g_summary, hide_index=True, width='stretch')
                     
             with col_g_chart:
-                fig_goog = create_super_bollinger_chart(res_goog['df_result'], "GOOG 日足 スーパーボリンジャー")
+                fig_goog = create_super_bollinger_chart(res_goog['df_result'], "")
                 st.plotly_chart(fig_goog, width='stretch')
         else:
             st.info("GOOGデータがありません。")
+
+def main():
+    st.title("📈 スーパーボリンジャー トレード支援エージェント")
+    st.markdown(
+        "各時間軸の相場特性に合わせて厳選された特化型ロジック（マルチ・ロジック戦略）による"
+        "独立した売買シグナル判定と成績表を自動更新で統合表示します。"
+    )
+    
+    st.markdown("<hr style='margin-top: 0.5rem; margin-bottom: 1.5rem;'>", unsafe_allow_html=True)
+    
+    # 自動更新フラグメントの実行
+    render_dashboard()
 
 if __name__ == "__main__":
     main()

@@ -1,22 +1,17 @@
 import pandas as pd
+import numpy as np
 
-def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000, initial_capital: float = 1000000) -> dict:
+def run_backtest(df: pd.DataFrame, entry_strat: str = None, exit_strat: str = None, lagging_type: str = None, timeframe: str = None, volume: int = 10000, initial_capital: float = 1000000.0, lot_size: int = None) -> dict:
     """
     スーパーボリンジャー算出済みのデータフレーム上で売買シミュレーションを実行する。
+    本番UIおよび一括検証の共通バックテストシミュレータ。
     
-    適用ロジック: 時間軸別の「平均利益トップモデル」（グリッドサーチ厳選設定）
-    - 最大1ポジションの単利運用（ロング・ショート両対応）
-    
-    【1時間足 (1h)】
-    - 新規エントリー: E3 (遅行スパン好転 ＆ バンド拡大 ＆ 終値 > +2σ) - HIGH_LOW基準
-    - 決済: EX1 (遅行スパン逆転)
-    【4時間足 (4h)】
-    - 新規エントリー: E3 (遅行スパン好転 ＆ バンド拡大 ＆ 終値 > +2σ) - HIGH_LOW基準
-    - 決済: EX1 (遅行スパン逆転)
-    【日足 (1d)】
-    - 新規エントリー: E2 (遅行スパン好転 ＆ バンド拡大 ＆ 終値 > +1σ) - HIGH_LOW基準
-    - 決済: EX5 (遅行スパン逆転 または 終値 < センターライン)
+    タイムフレーム、エントリー・決済パラメータ、遅行スパン基準に基づいた汎用シミュレーションを実行。
+    翌足始値約定モデル（厳密版）＋ 21MAエグジット時の21MA同方向エントリーフィルター付き。
     """
+    if lot_size is not None:
+        volume = lot_size
+
     if df is None or df.empty or 'plus_1sigma' not in df.columns:
         return {
             "total_trades": 0, "long_trades": 0, "short_trades": 0,
@@ -25,12 +20,53 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000, i
             "current_position": 0, "df_result": pd.DataFrame(), "trades": []
         }
         
+    # UI側の引数(timeframe文字列)から各種パラメータへ自動マッピング(後方互換性)
+    if timeframe is not None:
+        if timeframe == "1h_e6_ex2":
+            entry_strat = "E6"
+            exit_strat = "EX2"
+            lagging_type = "high_low"
+        elif timeframe == "1h_e1_ex3":
+            entry_strat = "E1"
+            exit_strat = "EX3"
+            lagging_type = "high_low"
+        elif timeframe == "4h_e1_ex3":
+            entry_strat = "E1"
+            exit_strat = "EX3"
+            lagging_type = "high_low"
+        elif timeframe == "1d_e2_ex5":
+            entry_strat = "E2"
+            exit_strat = "EX5"
+            lagging_type = "high_low"
+        elif timeframe == "goog_e4_ex5":
+            entry_strat = "E4"
+            exit_strat = "EX5"
+            lagging_type = "close"
+        # 互換用 (旧タイムフレームキー)
+        elif timeframe == "1h":
+            entry_strat = "E6"
+            exit_strat = "EX1"
+            lagging_type = "high_low"
+        elif timeframe == "4h":
+            entry_strat = "E6"
+            exit_strat = "EX1"
+            lagging_type = "high_low"
+        elif timeframe == "1d":
+            entry_strat = "E2"
+            exit_strat = "EX5"
+            lagging_type = "high_low"
+            
+    # パラメータ未指定時のデフォルトフォールバック
+    if entry_strat is None:
+        entry_strat = "E1"
+    if exit_strat is None:
+        exit_strat = "EX1"
+    if lagging_type is None:
+        lagging_type = "close"
+        
     df = df.copy()
     
-    # エクスパンション判定用の差分列を作成
-    df['m2s_diff'] = df['minus_2sigma'].diff()
-    df['p2s_diff'] = df['plus_2sigma'].diff()
-    
+    # シグナル記録用カラム
     df['signal'] = 0
     df['position'] = 0
     df['trade_profit'] = 0.0
@@ -48,109 +84,169 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000, i
     col_prof = df.columns.get_loc('trade_profit')
     col_cum = df.columns.get_loc('cumulative_profit')
     
-    for i in range(1, len(df)):
+    for i in range(1, len(df) - 1):
         row = df.iloc[i]
         idx = df.index[i]
         
-        if pd.isna(row['plus_1sigma']) or pd.isna(row['past_high_21']):
+        next_row = df.iloc[i + 1]
+        next_idx = df.index[i + 1]
+        
+        # 必要なカラムの存在チェックおよびNaNチェック
+        if pd.isna(row['plus_1sigma']) or pd.isna(row['past_high_21']) or pd.isna(row.get('past_close_21')):
+            df.iat[i + 1, col_pos] = current_pos
+            df.iat[i + 1, col_cum] = cumulative_profit
             continue
             
         close_p = row['Close']
-        plus_1s = row['plus_1sigma']
-        minus_1s = row['minus_1sigma']
-        plus_2s = row['plus_2sigma']
-        minus_2s = row['minus_2sigma']
         center_line = row['center_line']
-        past_high = row['past_high_21']
-        past_low = row['past_low_21']
         
-        # 本物のエクスパンション（バンド幅の拡大）判定: -2σが下向き かつ +2σが上向き
-        m2s_down = row['m2s_diff'] < 0
-        p2s_up = row['p2s_diff'] > 0
-        is_expansion = m2s_down and p2s_up
+        # 遅行スパン判定（終値基準 / 高安基準の解決）
+        if lagging_type == 'close':
+            is_lagging_bull = row['Close'] > row['Close_21_ago']
+            is_lagging_bear = row['Close'] < row['Close_21_ago']
+        else: # 'high_low'
+            is_lagging_bull = row['Close'] > row['High_21_ago']
+            is_lagging_bear = row['Close'] < row['Low_21_ago']
+            
+        sig_to_set = 0
+        profit_to_set = 0.0
         
         if current_pos == 0:
-            # --- 新規エントリー判定 (時間軸別の特化モデル) ---
-            if timeframe == "1h":
-                if close_p > past_high and close_p > plus_2s and is_expansion:
-                    current_pos = 1
-                    entry_price = close_p
-                    entry_time = idx
-                    df.iat[i, col_sig] = 1
-                elif close_p < past_low and close_p < minus_2s and is_expansion:
-                    current_pos = -1
-                    entry_price = close_p
-                    entry_time = idx
-                    df.iat[i, col_sig] = -1
-            elif timeframe == "4h":
-                if close_p > past_high and close_p > plus_2s and is_expansion:
-                    current_pos = 1
-                    entry_price = close_p
-                    entry_time = idx
-                    df.iat[i, col_sig] = 1
-                elif close_p < past_low and close_p < minus_2s and is_expansion:
-                    current_pos = -1
-                    entry_price = close_p
-                    entry_time = idx
-                    df.iat[i, col_sig] = -1
-            elif timeframe == "1d":
-                if close_p > past_high and close_p > plus_1s and is_expansion:
-                    current_pos = 1
-                    entry_price = close_p
-                    entry_time = idx
-                    df.iat[i, col_sig] = 1
-                elif close_p < past_low and close_p < minus_1s and is_expansion:
-                    current_pos = -1
-                    entry_price = close_p
-                    entry_time = idx
-                    df.iat[i, col_sig] = -1
+            # --- 新規エントリー判定 ---
+            is_long_entry = False
+            is_short_entry = False
+            
+            # 【ロングエントリー判定】
+            if is_lagging_bull:
+                # エクスパンション判定なし (E1-E3)
+                if entry_strat == 'E1':
+                    is_long_entry = True
+                elif entry_strat == 'E2' and row['Close_gt_plus1']:
+                    is_long_entry = True
+                elif entry_strat == 'E3' and row['Close_gt_plus2']:
+                    is_long_entry = True
+                
+                # エクスパンション判定あり (E4-E6)
+                if row['Expansion']:
+                    if entry_strat == 'E4':
+                        is_long_entry = True
+                    elif entry_strat == 'E5' and row['Close_gt_plus1']:
+                        is_long_entry = True
+                    elif entry_strat == 'E6' and row['Close_gt_plus2']:
+                        is_long_entry = True
+                        
+            # 【ショートエントリー判定】
+            if is_lagging_bear:
+                # エクスパンション判定なし (E1-E3)
+                if entry_strat == 'E1':
+                    is_short_entry = True
+                elif entry_strat == 'E2' and row['Close_lt_minus1']:
+                    is_short_entry = True
+                elif entry_strat == 'E3' and row['Close_lt_minus2']:
+                    is_short_entry = True
+                
+                # エクスパンション判定あり (E4-E6)
+                if row['Expansion']:
+                    if entry_strat == 'E4':
+                        is_short_entry = True
+                    elif entry_strat == 'E5' and row['Close_lt_minus1']:
+                        is_short_entry = True
+                    elif entry_strat == 'E6' and row['Close_lt_minus2']:
+                        is_short_entry = True
+                        
+            # 21MAフィルターの適用 (決済条件に21MA中心線を含む EX3, EX5, EX6, EX7 が対象)
+            if exit_strat in ['EX3', 'EX5', 'EX6', 'EX7']:
+                if is_long_entry and not (close_p > center_line):
+                    is_long_entry = False
+                if is_short_entry and not (close_p < center_line):
+                    is_short_entry = False
                     
+            # ポジション確定処理（翌足の始値で約定）
+            if is_long_entry:
+                current_pos = 1
+                entry_price = next_row['Open']
+                entry_time = next_idx
+                sig_to_set = 1
+            elif is_short_entry:
+                current_pos = -1
+                entry_price = next_row['Open']
+                entry_time = next_idx
+                sig_to_set = -1
+                
         elif current_pos == 1:
             # --- 買いポジション決済判定 ---
             do_exit = False
-            if timeframe == "1h" and close_p < past_low:
+            
+            c5 = is_lagging_bear                 # 遅行スパン陰転
+            c6 = row['Close_lt_plus1']           # 終値が+1σを割り込む
+            c7 = row['Close_lt_21MA']            # 終値が21MA(センターライン)を割り込む
+            
+            if exit_strat == 'EX1' and c5:
                 do_exit = True
-            elif timeframe == "4h" and close_p < past_low:
+            elif exit_strat == 'EX2' and c6:
                 do_exit = True
-            elif timeframe == "1d" and (close_p < past_low or close_p < center_line):
+            elif exit_strat == 'EX3' and c7:
+                do_exit = True
+            elif exit_strat == 'EX4' and (c5 or c6):
+                do_exit = True
+            elif exit_strat == 'EX5' and (c5 or c7):
+                do_exit = True
+            elif exit_strat == 'EX6' and (c6 or c7):
+                do_exit = True
+            elif exit_strat == 'EX7' and (c5 or c6 or c7):
                 do_exit = True
                 
             if do_exit:
                 current_pos = 0
-                exit_price = close_p
+                exit_price = next_row['Open']
                 profit = (exit_price - entry_price) * volume
                 cumulative_profit += profit
                 trades.append({
-                    "type": "LONG", "entry_time": entry_time, "exit_time": idx,
+                    "type": "LONG", "entry_time": entry_time, "exit_time": next_idx,
                     "entry_price": entry_price, "exit_price": exit_price, "profit": profit
                 })
-                df.iat[i, col_sig] = 2
-                df.iat[i, col_prof] = profit
+                sig_to_set = 2
+                profit_to_set = profit
                 
         elif current_pos == -1:
             # --- 売りポジション決済判定 ---
             do_exit = False
-            if timeframe == "1h" and close_p > past_high:
+            
+            c8 = is_lagging_bull                 # 遅行スパン陽転
+            c9 = row['Close_gt_minus1']          # 終値が-1σを越える
+            c10 = row['Close_gt_21MA']           # 終値が21MA(センターライン)を越える
+            
+            if exit_strat == 'EX1' and c8:
                 do_exit = True
-            elif timeframe == "4h" and close_p > past_high:
+            elif exit_strat == 'EX2' and c9:
                 do_exit = True
-            elif timeframe == "1d" and (close_p > past_high or close_p > center_line):
+            elif exit_strat == 'EX3' and c10:
+                do_exit = True
+            elif exit_strat == 'EX4' and (c8 or c9):
+                do_exit = True
+            elif exit_strat == 'EX5' and (c8 or c10):
+                do_exit = True
+            elif exit_strat == 'EX6' and (c9 or c10):
+                do_exit = True
+            elif exit_strat == 'EX7' and (c8 or c9 or c10):
                 do_exit = True
                 
             if do_exit:
                 current_pos = 0
-                exit_price = close_p
+                exit_price = next_row['Open']
                 profit = (entry_price - exit_price) * volume
                 cumulative_profit += profit
                 trades.append({
-                    "type": "SHORT", "entry_time": entry_time, "exit_time": idx,
+                    "type": "SHORT", "entry_time": entry_time, "exit_time": next_idx,
                     "entry_price": entry_price, "exit_price": exit_price, "profit": profit
                 })
-                df.iat[i, col_sig] = -2
-                df.iat[i, col_prof] = profit
+                sig_to_set = -2
+                profit_to_set = profit
                 
-        df.iat[i, col_pos] = current_pos
-        df.iat[i, col_cum] = cumulative_profit
+        df.iat[i + 1, col_sig] = sig_to_set
+        df.iat[i + 1, col_prof] = profit_to_set
+        df.iat[i + 1, col_pos] = current_pos
+        df.iat[i + 1, col_cum] = cumulative_profit
         
     total_trades = len(trades)
     long_trades = sum(1 for t in trades if t['type'] == 'LONG')
@@ -189,10 +285,32 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000, i
         current_entry_price = entry_price
         current_entry_time = entry_time
         latest_close = df['Close'].iloc[-1]
-        # 買ポジション(1): (Close - Entry) * Vol
-        # 売ポジション(-1): (Entry - Close) * Vol  -> (Close - Entry) * Vol * (-1) と同等
         current_unrealized_profit = (latest_close - entry_price) * volume * current_pos
         
+    # 互換用の集計値
+    avg_pnl = total_profit / total_trades if total_trades > 0 else 0.0
+    win_trades = wins
+    lose_trades = total_trades - wins
+    
+    # 互換用の残高履歴 (DataFrame)
+    balance_history = pd.DataFrame({
+        'datetime': df['datetime'] if 'datetime' in df.columns else df.index,
+        'balance': equity
+    })
+    
+    # 一括検証スクリプト互換用の metrics 辞書を追加
+    metrics = {
+        "total_trades": total_trades,
+        "win_rate": win_rate / 100.0, # 検証スクリプト側は割合（0.0〜1.0）を想定しているため100で割る
+        "total_pnl": total_profit,
+        "profit_factor": profit_factor,
+        "max_drawdown": max_dd_amount,
+        "recovery_factor": total_profit / max_dd_amount if max_dd_amount > 0 else 0.0,
+        "avg_pnl": avg_pnl,
+        "win_trades": win_trades,
+        "lose_trades": lose_trades
+    }
+    
     return {
         "total_trades": total_trades,
         "long_trades": long_trades,
@@ -208,5 +326,7 @@ def run_backtest(df: pd.DataFrame, timeframe: str = "1h", volume: int = 10000, i
         "current_entry_time": current_entry_time,
         "current_unrealized_profit": current_unrealized_profit,
         "df_result": df,
-        "trades": trades
+        "trades": trades,
+        "metrics": metrics,
+        "balance_history": balance_history
     }

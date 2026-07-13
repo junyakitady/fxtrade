@@ -30,9 +30,43 @@ def calculate_super_bollinger(df: pd.DataFrame, period: int = 21) -> pd.DataFram
     df['chikou_span'] = df['Close'].shift(-period)
     
     # シグナル判定用の補助列 (21期間前のローソク足を当日の行へシフト)
-    # 当日の Close > past_high_21 で遅行スパンの上抜けを検知できる
     df['past_high_21'] = df['High'].shift(period)
     df['past_low_21'] = df['Low'].shift(period)
+    df['past_close_21'] = df['Close'].shift(period)
+    
+    # 検証ツール互換用の別名カラム
+    df['21MA'] = df['center_line']
+    df['StdDev'] = std
+    df['+1σ'] = df['plus_1sigma']
+    df['+2σ'] = df['plus_2sigma']
+    df['-1σ'] = df['minus_1sigma']
+    df['-2σ'] = df['minus_2sigma']
+    df['Close_21_ago'] = df['past_close_21']
+    df['High_21_ago'] = df['past_high_21']
+    df['Low_21_ago'] = df['past_low_21']
+    
+    # 遅行スパン陽転・陰転状態 (デフォルト: 終値ベース)
+    df['Lagging_Bullish'] = df['Close'] > df['Close_21_ago']
+    df['Lagging_Bearish'] = df['Close'] < df['Close_21_ago']
+    
+    # エクスパンション（バンド幅の拡大）判定用の差分
+    df['+2σ_diff'] = df['+2σ'].diff()
+    df['-2σ_diff'] = df['-2σ'].diff()
+    df['m2s_diff'] = df['-2σ_diff']
+    df['p2s_diff'] = df['+2σ_diff']
+    df['Expansion'] = (df['+2σ_diff'] > 0) & (df['-2σ_diff'] < 0)
+    
+    # 終値とバンドの比較判定フラグ
+    df['Close_gt_plus1'] = df['Close'] > df['+1σ']
+    df['Close_gt_plus2'] = df['Close'] > df['+2σ']
+    df['Close_lt_minus1'] = df['Close'] < df['-1σ']
+    df['Close_lt_minus2'] = df['Close'] < df['-2σ']
+    
+    # エグジット判定用フラグ
+    df['Close_lt_plus1'] = df['Close'] < df['+1σ']
+    df['Close_lt_21MA'] = df['Close'] < df['21MA']
+    df['Close_gt_minus1'] = df['Close'] > df['-1σ']
+    df['Close_gt_21MA'] = df['Close'] > df['21MA']
     
     return df
 
