@@ -1,6 +1,118 @@
 import pandas as pd
 import numpy as np
 
+def _generate_backtest_signals(df: pd.DataFrame, entry_strat: str, exit_strat: str, lagging_type: str) -> pd.DataFrame:
+    """
+    バックテスト用の取引判定シグナル（エントリー・エグジット）をベクトル演算で生成する。
+    """
+    df = df.copy()
+    
+    # シグナル列の初期化
+    df['entry_long'] = False
+    df['entry_short'] = False
+    df['exit_long'] = False
+    df['exit_short'] = False
+    
+    if entry_strat == "MACD_DOTEN":
+        df['entry_long'] = df.get('macd_gc', False)
+        df['entry_short'] = df.get('macd_dc', False)
+        df['exit_long'] = df.get('macd_dc', False)
+        df['exit_short'] = df.get('macd_gc', False)
+        return df
+        
+    # 遅行スパン判定（終値基準 / 高安基準の解決）
+    if lagging_type == 'close':
+        is_lagging_bull = df['Close'] > df.get('Close_21_ago', df['Close'].shift(21))
+        is_lagging_bear = df['Close'] < df.get('Close_21_ago', df['Close'].shift(21))
+    else: # 'high_low'
+        is_lagging_bull = df['Close'] > df.get('High_21_ago', df['High'].shift(21))
+        is_lagging_bear = df['Close'] < df.get('Low_21_ago', df['Low'].shift(21))
+        
+    # --- 買いエントリー条件 (entry_long) ---
+    is_long = pd.Series(False, index=df.index)
+    if entry_strat == 'E1':
+        is_long = is_lagging_bull
+    elif entry_strat == 'E2':
+        is_long = is_lagging_bull & df.get('Close_gt_plus1', False)
+    elif entry_strat == 'E3':
+        is_long = is_lagging_bull & df.get('Close_gt_plus2', False)
+    elif entry_strat == 'E4':
+        is_long = is_lagging_bull & df.get('Expansion', False)
+    elif entry_strat == 'E5':
+        is_long = is_lagging_bull & df.get('Expansion', False) & df.get('Close_gt_plus1', False)
+    elif entry_strat == 'E6':
+        is_long = is_lagging_bull & df.get('Expansion', False) & df.get('Close_gt_plus2', False)
+        
+    # --- 売りエントリー条件 (entry_short) ---
+    is_short = pd.Series(False, index=df.index)
+    if entry_strat == 'E1':
+        is_short = is_lagging_bear
+    elif entry_strat == 'E2':
+        is_short = is_lagging_bear & df.get('Close_lt_minus1', False)
+    elif entry_strat == 'E3':
+        is_short = is_lagging_bear & df.get('Close_lt_minus2', False)
+    elif entry_strat == 'E4':
+        is_short = is_lagging_bear & df.get('Expansion', False)
+    elif entry_strat == 'E5':
+        is_short = is_lagging_bear & df.get('Expansion', False) & df.get('Close_lt_minus1', False)
+    elif entry_strat == 'E6':
+        is_short = is_lagging_bear & df.get('Expansion', False) & df.get('Close_lt_minus2', False)
+
+    # 21MA同方向フィルターの適用 (EX3, EX5, EX6, EX7が対象)
+    if exit_strat in ['EX3', 'EX5', 'EX6', 'EX7']:
+        is_long = is_long & (df['Close'] > df.get('center_line', df['Close']))
+        is_short = is_short & (df['Close'] < df.get('center_line', df['Close']))
+
+    df['entry_long'] = is_long
+    df['entry_short'] = is_short
+
+    # --- 買いエグジット条件 (exit_long) ---
+    c5 = is_lagging_bear
+    c6 = df.get('Close_lt_plus1', False)
+    c7 = df.get('Close_lt_21MA', False)
+    
+    exit_l = pd.Series(False, index=df.index)
+    if exit_strat == 'EX1':
+        exit_l = c5
+    elif exit_strat == 'EX2':
+        exit_l = c6
+    elif exit_strat == 'EX3':
+        exit_l = c7
+    elif exit_strat == 'EX4':
+        exit_l = c5 | c6
+    elif exit_strat == 'EX5':
+        exit_l = c5 | c7
+    elif exit_strat == 'EX6':
+        exit_l = c6 | c7
+    elif exit_strat == 'EX7':
+        exit_l = c5 | c6 | c7
+        
+    # --- 売りエグジット条件 (exit_short) ---
+    c8 = is_lagging_bull
+    c9 = df.get('Close_gt_minus1', False)
+    c10 = df.get('Close_gt_21MA', False)
+    
+    exit_s = pd.Series(False, index=df.index)
+    if exit_strat == 'EX1':
+        exit_s = c8
+    elif exit_strat == 'EX2':
+        exit_s = c9
+    elif exit_strat == 'EX3':
+        exit_s = c10
+    elif exit_strat == 'EX4':
+        exit_s = c8 | c9
+    elif exit_strat == 'EX5':
+        exit_s = c8 | c10
+    elif exit_strat == 'EX6':
+        exit_s = c9 | c10
+    elif exit_strat == 'EX7':
+        exit_s = c8 | c9 | c10
+
+    df['exit_long'] = exit_l
+    df['exit_short'] = exit_s
+
+    return df
+
 def run_backtest(df: pd.DataFrame, entry_strat: str = None, exit_strat: str = None, lagging_type: str = None, timeframe: str = None, volume: int = 10000, initial_capital: float = 1000000.0, lot_size: int = None) -> dict:
     """
     スーパーボリンジャー算出済みのデータフレーム上で売買シミュレーションを実行する。
@@ -12,7 +124,11 @@ def run_backtest(df: pd.DataFrame, entry_strat: str = None, exit_strat: str = No
     if lot_size is not None:
         volume = lot_size
 
-    if df is None or df.empty or 'plus_1sigma' not in df.columns:
+    # timeframeから判断できるように早めの解決、またはカラム確認
+    is_macd = (timeframe == "1h_macd_doten" or entry_strat == "MACD_DOTEN")
+    required_col = 'macd' if is_macd else 'plus_1sigma'
+    
+    if df is None or df.empty or required_col not in df.columns:
         return {
             "total_trades": 0, "long_trades": 0, "short_trades": 0,
             "wins": 0, "win_rate": 0.0, "total_profit": 0.0,
@@ -42,6 +158,10 @@ def run_backtest(df: pd.DataFrame, entry_strat: str = None, exit_strat: str = No
             entry_strat = "E4"
             exit_strat = "EX5"
             lagging_type = "close"
+        elif timeframe == "1h_macd_doten":
+            entry_strat = "MACD_DOTEN"
+            exit_strat = "MACD_DOTEN"
+            lagging_type = "none"
         # 互換用 (旧タイムフレームキー)
         elif timeframe == "1h":
             entry_strat = "E6"
@@ -66,6 +186,9 @@ def run_backtest(df: pd.DataFrame, entry_strat: str = None, exit_strat: str = No
         
     df = df.copy()
     
+    # 事前にシグナル（entry_long, entry_short, exit_long, exit_short）をベクトル計算で生成
+    df_signals = _generate_backtest_signals(df, entry_strat, exit_strat, lagging_type)
+    
     # シグナル記録用カラム
     df['signal'] = 0
     df['position'] = 0
@@ -84,165 +207,100 @@ def run_backtest(df: pd.DataFrame, entry_strat: str = None, exit_strat: str = No
     col_prof = df.columns.get_loc('trade_profit')
     col_cum = df.columns.get_loc('cumulative_profit')
     
+    is_macd_doten = (entry_strat == "MACD_DOTEN")
+    
     for i in range(1, len(df) - 1):
-        row = df.iloc[i]
-        idx = df.index[i]
-        
-        next_row = df.iloc[i + 1]
-        next_idx = df.index[i + 1]
+        row = df_signals.iloc[i]
+        idx = df_signals.index[i]
+        next_row = df_signals.iloc[i + 1]
+        next_idx = df_signals.index[i + 1]
         
         # 必要なカラムの存在チェックおよびNaNチェック
-        if pd.isna(row['plus_1sigma']) or pd.isna(row['past_high_21']) or pd.isna(row.get('past_close_21')):
-            df.iat[i + 1, col_pos] = current_pos
-            df.iat[i + 1, col_cum] = cumulative_profit
-            continue
-            
-        close_p = row['Close']
-        center_line = row['center_line']
-        
-        # 遅行スパン判定（終値基準 / 高安基準の解決）
-        if lagging_type == 'close':
-            is_lagging_bull = row['Close'] > row['Close_21_ago']
-            is_lagging_bear = row['Close'] < row['Close_21_ago']
-        else: # 'high_low'
-            is_lagging_bull = row['Close'] > row['High_21_ago']
-            is_lagging_bear = row['Close'] < row['Low_21_ago']
-            
+        if is_macd_doten:
+            if 'macd' not in df.columns or pd.isna(row.get('macd')) or pd.isna(row.get('macd_gc')):
+                df.iat[i + 1, col_pos] = current_pos
+                df.iat[i + 1, col_cum] = cumulative_profit
+                continue
+        else:
+            if 'plus_1sigma' not in df.columns or pd.isna(row.get('plus_1sigma')):
+                df.iat[i + 1, col_pos] = current_pos
+                df.iat[i + 1, col_cum] = cumulative_profit
+                continue
+                
         sig_to_set = 0
         profit_to_set = 0.0
         
-        if current_pos == 0:
-            # --- 新規エントリー判定 ---
-            is_long_entry = False
-            is_short_entry = False
-            
-            # 【ロングエントリー判定】
-            if is_lagging_bull:
-                # エクスパンション判定なし (E1-E3)
-                if entry_strat == 'E1':
-                    is_long_entry = True
-                elif entry_strat == 'E2' and row['Close_gt_plus1']:
-                    is_long_entry = True
-                elif entry_strat == 'E3' and row['Close_gt_plus2']:
-                    is_long_entry = True
-                
-                # エクスパンション判定あり (E4-E6)
-                if row['Expansion']:
-                    if entry_strat == 'E4':
-                        is_long_entry = True
-                    elif entry_strat == 'E5' and row['Close_gt_plus1']:
-                        is_long_entry = True
-                    elif entry_strat == 'E6' and row['Close_gt_plus2']:
-                        is_long_entry = True
-                        
-            # 【ショートエントリー判定】
-            if is_lagging_bear:
-                # エクスパンション判定なし (E1-E3)
-                if entry_strat == 'E1':
-                    is_short_entry = True
-                elif entry_strat == 'E2' and row['Close_lt_minus1']:
-                    is_short_entry = True
-                elif entry_strat == 'E3' and row['Close_lt_minus2']:
-                    is_short_entry = True
-                
-                # エクスパンション判定あり (E4-E6)
-                if row['Expansion']:
-                    if entry_strat == 'E4':
-                        is_short_entry = True
-                    elif entry_strat == 'E5' and row['Close_lt_minus1']:
-                        is_short_entry = True
-                    elif entry_strat == 'E6' and row['Close_lt_minus2']:
-                        is_short_entry = True
-                        
-            # 21MAフィルターの適用 (決済条件に21MA中心線を含む EX3, EX5, EX6, EX7 が対象)
-            if exit_strat in ['EX3', 'EX5', 'EX6', 'EX7']:
-                if is_long_entry and not (close_p > center_line):
-                    is_long_entry = False
-                if is_short_entry and not (close_p < center_line):
-                    is_short_entry = False
-                    
-            # ポジション確定処理（翌足の始値で約定）
-            if is_long_entry:
+        if is_macd_doten:
+            # MACDドテン約定モデル
+            if row['entry_long']: # 買いドテンシグナル
+                if current_pos == -1: # ショートポジションの決済
+                    exit_price = next_row['Open']
+                    profit = (entry_price - exit_price) * volume
+                    cumulative_profit += profit
+                    trades.append({
+                        "type": "SHORT", "entry_time": entry_time, "exit_time": next_idx,
+                        "entry_price": entry_price, "exit_price": exit_price, "profit": profit
+                    })
+                    profit_to_set = profit
                 current_pos = 1
                 entry_price = next_row['Open']
                 entry_time = next_idx
                 sig_to_set = 1
-            elif is_short_entry:
+            elif row['entry_short']: # 売りドテンシグナル
+                if current_pos == 1: # ロングポジションの決済
+                    exit_price = next_row['Open']
+                    profit = (exit_price - entry_price) * volume
+                    cumulative_profit += profit
+                    trades.append({
+                        "type": "LONG", "entry_time": entry_time, "exit_time": next_idx,
+                        "entry_price": entry_price, "exit_price": exit_price, "profit": profit
+                    })
+                    profit_to_set = profit
                 current_pos = -1
                 entry_price = next_row['Open']
                 entry_time = next_idx
                 sig_to_set = -1
-                
-        elif current_pos == 1:
-            # --- 買いポジション決済判定 ---
-            do_exit = False
-            
-            c5 = is_lagging_bear                 # 遅行スパン陰転
-            c6 = row['Close_lt_plus1']           # 終値が+1σを割り込む
-            c7 = row['Close_lt_21MA']            # 終値が21MA(センターライン)を割り込む
-            
-            if exit_strat == 'EX1' and c5:
-                do_exit = True
-            elif exit_strat == 'EX2' and c6:
-                do_exit = True
-            elif exit_strat == 'EX3' and c7:
-                do_exit = True
-            elif exit_strat == 'EX4' and (c5 or c6):
-                do_exit = True
-            elif exit_strat == 'EX5' and (c5 or c7):
-                do_exit = True
-            elif exit_strat == 'EX6' and (c6 or c7):
-                do_exit = True
-            elif exit_strat == 'EX7' and (c5 or c6 or c7):
-                do_exit = True
-                
-            if do_exit:
-                current_pos = 0
-                exit_price = next_row['Open']
-                profit = (exit_price - entry_price) * volume
-                cumulative_profit += profit
-                trades.append({
-                    "type": "LONG", "entry_time": entry_time, "exit_time": next_idx,
-                    "entry_price": entry_price, "exit_price": exit_price, "profit": profit
-                })
-                sig_to_set = 2
-                profit_to_set = profit
-                
-        elif current_pos == -1:
-            # --- 売りポジション決済判定 ---
-            do_exit = False
-            
-            c8 = is_lagging_bull                 # 遅行スパン陽転
-            c9 = row['Close_gt_minus1']          # 終値が-1σを越える
-            c10 = row['Close_gt_21MA']           # 終値が21MA(センターライン)を越える
-            
-            if exit_strat == 'EX1' and c8:
-                do_exit = True
-            elif exit_strat == 'EX2' and c9:
-                do_exit = True
-            elif exit_strat == 'EX3' and c10:
-                do_exit = True
-            elif exit_strat == 'EX4' and (c8 or c9):
-                do_exit = True
-            elif exit_strat == 'EX5' and (c8 or c10):
-                do_exit = True
-            elif exit_strat == 'EX6' and (c9 or c10):
-                do_exit = True
-            elif exit_strat == 'EX7' and (c8 or c9 or c10):
-                do_exit = True
-                
-            if do_exit:
-                current_pos = 0
-                exit_price = next_row['Open']
-                profit = (entry_price - exit_price) * volume
-                cumulative_profit += profit
-                trades.append({
-                    "type": "SHORT", "entry_time": entry_time, "exit_time": next_idx,
-                    "entry_price": entry_price, "exit_price": exit_price, "profit": profit
-                })
-                sig_to_set = -2
-                profit_to_set = profit
-                
+        else:
+            # 通常の決済＆エントリーモデル
+            if current_pos == 0:
+                # 新規エントリー
+                if row['entry_long']:
+                    current_pos = 1
+                    entry_price = next_row['Open']
+                    entry_time = next_idx
+                    sig_to_set = 1
+                elif row['entry_short']:
+                    current_pos = -1
+                    entry_price = next_row['Open']
+                    entry_time = next_idx
+                    sig_to_set = -1
+            elif current_pos == 1:
+                # 買い決済
+                if row['exit_long']:
+                    current_pos = 0
+                    exit_price = next_row['Open']
+                    profit = (exit_price - entry_price) * volume
+                    cumulative_profit += profit
+                    trades.append({
+                        "type": "LONG", "entry_time": entry_time, "exit_time": next_idx,
+                        "entry_price": entry_price, "exit_price": exit_price, "profit": profit
+                    })
+                    sig_to_set = 2
+                    profit_to_set = profit
+            elif current_pos == -1:
+                # 売り決済
+                if row['exit_short']:
+                    current_pos = 0
+                    exit_price = next_row['Open']
+                    profit = (entry_price - exit_price) * volume
+                    cumulative_profit += profit
+                    trades.append({
+                        "type": "SHORT", "entry_time": entry_time, "exit_time": next_idx,
+                        "entry_price": entry_price, "exit_price": exit_price, "profit": profit
+                    })
+                    sig_to_set = -2
+                    profit_to_set = profit
+                    
         df.iat[i + 1, col_sig] = sig_to_set
         df.iat[i + 1, col_prof] = profit_to_set
         df.iat[i + 1, col_pos] = current_pos

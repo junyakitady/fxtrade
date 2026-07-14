@@ -40,10 +40,9 @@ LAGGING_DESC = {
 }
 
 def run_all_combinations():
-    intervals = ['1h', '4h', '1d']
+    intervals = ['1h', '1d']
     periods = {
         '1h': '2y',
-        '4h': '2y',
         '1d': '5y'
     }
     
@@ -197,14 +196,13 @@ def generate_markdown_report(df_all: pd.DataFrame, best_results: dict):
         f.write("- **スワップ/スプレッド**: 考慮しない\n")
         f.write("- **検証期間**:\n")
         f.write("  - 1時間足 (1h): 過去2年間 (休場ギャップ排除)\n")
-        f.write("  - 4時間足 (4h): 過去2年間 (1時間足からリサンプル、休場ギャップ排除)\n")
         f.write("  - 1日足 (1d): 過去5年間 (休場ギャップ排除)\n\n")
         
         # 最良のまとめ
         f.write("## 各時間軸における最良戦略のまとめ（PF/取引回数 基準）\n")
         f.write("※信頼性確保のため、総トレード数が5回以上の戦略から選定しています。\n\n")
         
-        for interval in ['1h', '4h', '1d']:
+        for interval in ['1h', '1d']:
             if interval not in best_results:
                 continue
             best = best_results[interval]
@@ -229,7 +227,7 @@ def generate_markdown_report(df_all: pd.DataFrame, best_results: dict):
         f.write("## 💡 遅行スパン定義（アルゴリズム）別の集計・比較分析\n")
         f.write("どの遅行スパン判定基準が最も優秀だったかを検証するため、全時間軸・全戦略のデータを基準別に集計しました。\n\n")
         
-        for interval in ['1h', '4h', '1d']:
+        for interval in ['1h', '1d']:
             f.write(f"### ■ {interval.upper()} 足における定義別集計\n")
             df_int_all = df_clean[df_clean['interval'] == interval]
             
@@ -262,7 +260,7 @@ def generate_markdown_report(df_all: pd.DataFrame, best_results: dict):
         f.write("## 時間軸別の全戦略比較データ（PF / 取引回数 順、上位15位まで）\n")
         f.write("全42戦略のうち、PF/取引回数比率が高い上位15戦略を表示します。(詳細データは CSV にて保存されています)\n\n")
         
-        for interval in ['1h', '4h', '1d']:
+        for interval in ['1h', '1d']:
             f.write(f"### {interval.upper()} 足 上位15戦略一覧\n")
             df_int = df_clean[df_clean['interval'] == interval].sort_values(['pf_over_trades', 'total_pnl'], ascending=[False, False]).head(15)
             

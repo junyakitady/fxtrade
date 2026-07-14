@@ -70,6 +70,32 @@ def calculate_super_bollinger(df: pd.DataFrame, period: int = 21) -> pd.DataFram
     
     return df
 
+def calculate_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
+    """
+    データフレームにMACD（12, 26, 9）の指標およびゴールデンクロス/デッドクロスフラグを追加して返す。
+    """
+    if df is None or df.empty:
+        return df
+        
+    df = df.copy()
+    
+    # EMA計算
+    ema_fast = df['Close'].ewm(span=fast, adjust=False).mean()
+    ema_slow = df['Close'].ewm(span=slow, adjust=False).mean()
+    
+    # MACD線
+    df['macd'] = ema_fast - ema_slow
+    # シグナル線
+    df['macd_signal'] = df['macd'].ewm(span=signal, adjust=False).mean()
+    # ヒストグラム
+    df['macd_hist'] = df['macd'] - df['macd_signal']
+    
+    # クロス判定（1期前と比較）
+    df['macd_gc'] = (df['macd'] > df['macd_signal']) & (df['macd'].shift(1) <= df['macd_signal'].shift(1))
+    df['macd_dc'] = (df['macd'] < df['macd_signal']) & (df['macd'].shift(1) >= df['macd_signal'].shift(1))
+    
+    return df
+
 if __name__ == "__main__":
     # 動作確認用スクリプト
     from data_fetcher import fetch_data

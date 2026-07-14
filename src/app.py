@@ -6,9 +6,9 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from data_fetcher import fetch_data
-from indicator import calculate_super_bollinger
+from indicator import calculate_super_bollinger, calculate_macd
 from backtest import run_backtest
-from components.charts import create_super_bollinger_chart
+from components.charts import create_super_bollinger_chart, create_macd_chart
 
 st.set_page_config(
     page_title="スーパーボリンジャー トレードエージェント",
@@ -21,23 +21,19 @@ def load_and_process_data():
     data = fetch_data(period_1h="2y", period_1d="5y")
     results = {}
     
-    # 1時間足データの処理
+    # 1時間足データの処理 (スーパーボリンジャーおよびMACD)
     df_1h = data.get("1h")
     if df_1h is not None and not df_1h.empty:
         df_ind_1h = calculate_super_bollinger(df_1h)
         # E6 + EX2 (厳選・低DDモデル)
         results["1h"] = run_backtest(df_ind_1h, timeframe="1h_e6_ex2", volume=10000)
+        
+        # 1時間足 MACDドテン売買
+        df_macd_1h = calculate_macd(df_1h)
+        results["1h_macd"] = run_backtest(df_macd_1h, timeframe="1h_macd_doten", volume=10000)
     else:
         results["1h"] = None
-        
-    # 4時間足データの処理 (1時間足から自動生成される)
-    df_4h = data.get("4h")
-    if df_4h is not None and not df_4h.empty:
-        df_ind_4h = calculate_super_bollinger(df_4h)
-        # E1 + EX3 (エクスパンションなし)
-        results["4h"] = run_backtest(df_ind_4h, timeframe="4h_e1_ex3", volume=10000)
-    else:
-        results["4h"] = None
+        results["1h_macd"] = None
         
     # 日足データの処理
     df_1d = data.get("1d")
@@ -141,31 +137,32 @@ def render_dashboard():
     with row1_col1:
         st.subheader("📊 為替 総合サマリー (USD/JPY)")
         with st.container(border=True):
-            st.markdown("#### 各時間軸のステータスと適用戦略")
+            st.markdown("#### 各戦略のステータスと適用ロジック")
             
             strategy_descriptions = {
                 "1h": {"entry_desc": "遅行スパン陽転 & バンド拡大 & ±2σ 越え", "exit_desc": "±1σ割れ"},
-                "4h": {"entry_desc": "遅行スパン陽転のみ", "exit_desc": "21MA割れ"},
+                "1h_macd": {"entry_desc": "MACDゴールデンクロス (買いドテン)", "exit_desc": "MACDデッドクロス (売りドテン)"},
                 "1d": {"entry_desc": "遅行スパン陽転 & ±1σ 越え", "exit_desc": "遅行スパン陰転 or 21MA割れ"}
             }
             
-            render_signal_badge("1時間足", results.get("1h"), **strategy_descriptions["1h"])
-            render_signal_badge("4時間足", results.get("4h"), **strategy_descriptions["4h"])
-            render_signal_badge("日足", results.get("1d"), **strategy_descriptions["1d"])
+            render_signal_badge("1時間足 (スーパーボリンジャー)", results.get("1h"), **strategy_descriptions["1h"])
+            render_signal_badge("1時間足 (MACDドテン)", results.get("1h_macd"), **strategy_descriptions["1h_macd"])
+            render_signal_badge("日足 (スーパーボリンジャー)", results.get("1d"), **strategy_descriptions["1d"])
             
             st.markdown("---")
             
             summary_rows = []
-            for tf_code, tf_label in [("1h", "1時間足"), ("4h", "4時間足"), ("1d", "日足")]:
+            for tf_code, tf_label in [("1h", "1H スーパーボリンジャー"), ("1h_macd", "1H MACDドテン"), ("1d", "日足 スーパーボリンジャー")]:
                 r = results.get(tf_code)
                 if r:
                     pos = r['current_position']
                     sig_str = "🟢 買い保有中" if pos == 1 else "🔴 売り保有中" if pos == -1 else "⚪ ノーポジション"
+                    # ドテンはロングかショートのみなので、買い売りの内訳やノーポジション表記は通常通り
                     l_cnt = r.get('long_trades', 0)
                     s_cnt = r.get('short_trades', 0)
                     
                     summary_rows.append({
-                        "時間軸": tf_label,
+                        "戦略・時間軸": tf_label,
                         "シグナル判定": sig_str,
                         "総取引回数 (買/売)": f"{r['total_trades']} 回 (買:{l_cnt} / 売:{s_cnt})",
                         "勝率": f"{r['win_rate']:.1f} %",
@@ -173,7 +170,7 @@ def render_dashboard():
                     })
                 else:
                     summary_rows.append({
-                        "時間軸": tf_label,
+                        "戦略・時間軸": tf_label,
                         "シグナル判定": "データなし",
                         "総取引回数 (買/売)": "-", "勝率": "-", "損益合計": "-"
                     })
@@ -183,7 +180,7 @@ def render_dashboard():
             st.dataframe(df_summary, hide_index=True, width='stretch')
             
     with row1_col2:
-        st.subheader("🕒 1時間足")
+        st.subheader("🕒 1時間足 スーパーボリンジャー")
         with st.container(border=True):
             res_1h = results.get("1h")
             if res_1h:
@@ -196,17 +193,17 @@ def render_dashboard():
     row2_col1, row2_col2 = st.columns(2)
     
     with row2_col1:
-        st.subheader("🕓 4時間足")
+        st.subheader("📊 1時間足 MACDドテン売買")
         with st.container(border=True):
-            res_4h = results.get("4h")
-            if res_4h:
-                fig_4h = create_super_bollinger_chart(res_4h['df_result'], "")
-                st.plotly_chart(fig_4h, width='stretch')
+            res_macd = results.get("1h_macd")
+            if res_macd:
+                fig_macd = create_macd_chart(res_macd['df_result'], "")
+                st.plotly_chart(fig_macd, width='stretch')
             else:
                 st.info("データがありません。")
                 
     with row2_col2:
-        st.subheader("📅 日足")
+        st.subheader("📅 日足 スーパーボリンジャー")
         with st.container(border=True):
             res_1d = results.get("1d")
             if res_1d:
