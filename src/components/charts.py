@@ -32,6 +32,53 @@ def _prepare_x_axis_strings(df: pd.DataFrame) -> list[str]:
             
     return x_strings
 
+def _add_signal_markers(fig: go.Figure, df: pd.DataFrame, x_strings: list[str], row: int = None, col: int = None):
+    """
+    データフレーム内の 'signal' カラムに基づき、Plotlyの図(fig)へ4種類の売買マーカーを描画する。
+    """
+    if 'signal' not in df.columns:
+        return
+        
+    idx_b_in = np.where(df['signal'] == 1)[0]
+    if len(idx_b_in) > 0:
+        fig.add_trace(go.Scatter(
+            x=[x_strings[i] for i in idx_b_in],
+            y=df.iloc[idx_b_in]['Low'] - 0.15,
+            mode='markers',
+            marker=dict(symbol='triangle-up', size=12, color='#00e676', line=dict(width=1, color='black')),
+            name="買いエントリー"
+        ), row=row, col=col)
+        
+    idx_b_out = np.where(df['signal'] == 2)[0]
+    if len(idx_b_out) > 0:
+        fig.add_trace(go.Scatter(
+            x=[x_strings[i] for i in idx_b_out],
+            y=df.iloc[idx_b_out]['High'] + 0.15,
+            mode='markers',
+            marker=dict(symbol='triangle-down', size=12, color='#ff9100', line=dict(width=1, color='black')),
+            name="買い決済"
+        ), row=row, col=col)
+        
+    idx_s_in = np.where(df['signal'] == -1)[0]
+    if len(idx_s_in) > 0:
+        fig.add_trace(go.Scatter(
+            x=[x_strings[i] for i in idx_s_in],
+            y=df.iloc[idx_s_in]['High'] + 0.15,
+            mode='markers',
+            marker=dict(symbol='triangle-down', size=12, color='#ea80fc', line=dict(width=1, color='black')),
+            name="売りエントリー"
+        ), row=row, col=col)
+        
+    idx_s_out = np.where(df['signal'] == -2)[0]
+    if len(idx_s_out) > 0:
+        fig.add_trace(go.Scatter(
+            x=[x_strings[i] for i in idx_s_out],
+            y=df.iloc[idx_s_out]['Low'] - 0.15,
+            mode='markers',
+            marker=dict(symbol='triangle-up', size=12, color='#18ffff', line=dict(width=1, color='black')),
+            name="売り決済"
+        ), row=row, col=col)
+
 def create_super_bollinger_chart(df: pd.DataFrame, title: str = "スーパーボリンジャー", initial_display_candles: int = 64) -> go.Figure:
     """
     Plotlyを用いてローソク足チャート、スーパーボリンジャー各指標、売買マーカーを描画する。
@@ -103,46 +150,7 @@ def create_super_bollinger_chart(df: pd.DataFrame, title: str = "スーパーボ
         ))
         
     # 3. 売買シグナルマーカーの重畳描画
-    if 'signal' in df.columns:
-        idx_b_in = np.where(df['signal'] == 1)[0]
-        if len(idx_b_in) > 0:
-            fig.add_trace(go.Scatter(
-                x=[x_strings[i] for i in idx_b_in],
-                y=df.iloc[idx_b_in]['Low'] - 0.15,
-                mode='markers',
-                marker=dict(symbol='triangle-up', size=12, color='#00e676', line=dict(width=1, color='black')),
-                name="買いエントリー"
-            ))
-            
-        idx_b_out = np.where(df['signal'] == 2)[0]
-        if len(idx_b_out) > 0:
-            fig.add_trace(go.Scatter(
-                x=[x_strings[i] for i in idx_b_out],
-                y=df.iloc[idx_b_out]['High'] + 0.15,
-                mode='markers',
-                marker=dict(symbol='triangle-down', size=12, color='#ff9100', line=dict(width=1, color='black')),
-                name="買い決済"
-            ))
-            
-        idx_s_in = np.where(df['signal'] == -1)[0]
-        if len(idx_s_in) > 0:
-            fig.add_trace(go.Scatter(
-                x=[x_strings[i] for i in idx_s_in],
-                y=df.iloc[idx_s_in]['High'] + 0.15,
-                mode='markers',
-                marker=dict(symbol='triangle-down', size=12, color='#ea80fc', line=dict(width=1, color='black')),
-                name="売りエントリー"
-            ))
-            
-        idx_s_out = np.where(df['signal'] == -2)[0]
-        if len(idx_s_out) > 0:
-            fig.add_trace(go.Scatter(
-                x=[x_strings[i] for i in idx_s_out],
-                y=df.iloc[idx_s_out]['Low'] - 0.15,
-                mode='markers',
-                marker=dict(symbol='triangle-up', size=12, color='#18ffff', line=dict(width=1, color='black')),
-                name="売り決済"
-            ))
+    _add_signal_markers(fig, df, x_strings)
             
     fig.update_layout(
         title=title,
@@ -225,46 +233,7 @@ def create_macd_chart(df: pd.DataFrame, title: str = "MACDドテン売買", init
     ), row=1, col=1)
 
     # 2. 上段: 売買シグナルマーカー
-    if 'signal' in df.columns:
-        idx_b_in = np.where(df['signal'] == 1)[0]
-        if len(idx_b_in) > 0:
-            fig.add_trace(go.Scatter(
-                x=[x_strings[i] for i in idx_b_in],
-                y=df.iloc[idx_b_in]['Low'] - 0.15,
-                mode='markers',
-                marker=dict(symbol='triangle-up', size=12, color='#00e676', line=dict(width=1, color='black')),
-                name="買いエントリー"
-            ), row=1, col=1)
-            
-        idx_b_out = np.where(df['signal'] == 2)[0]
-        if len(idx_b_out) > 0:
-            fig.add_trace(go.Scatter(
-                x=[x_strings[i] for i in idx_b_out],
-                y=df.iloc[idx_b_out]['High'] + 0.15,
-                mode='markers',
-                marker=dict(symbol='triangle-down', size=12, color='#ff9100', line=dict(width=1, color='black')),
-                name="買い決済"
-            ), row=1, col=1)
-            
-        idx_s_in = np.where(df['signal'] == -1)[0]
-        if len(idx_s_in) > 0:
-            fig.add_trace(go.Scatter(
-                x=[x_strings[i] for i in idx_s_in],
-                y=df.iloc[idx_s_in]['High'] + 0.15,
-                mode='markers',
-                marker=dict(symbol='triangle-down', size=12, color='#ea80fc', line=dict(width=1, color='black')),
-                name="売りエントリー"
-            ), row=1, col=1)
-            
-        idx_s_out = np.where(df['signal'] == -2)[0]
-        if len(idx_s_out) > 0:
-            fig.add_trace(go.Scatter(
-                x=[x_strings[i] for i in idx_s_out],
-                y=df.iloc[idx_s_out]['Low'] - 0.15,
-                mode='markers',
-                marker=dict(symbol='triangle-up', size=12, color='#18ffff', line=dict(width=1, color='black')),
-                name="売り決済"
-            ), row=1, col=1)
+    _add_signal_markers(fig, df, x_strings, row=1, col=1)
 
     # 3. 下段: MACD線 & シグナル線
     if 'macd' in df.columns and 'macd_signal' in df.columns:

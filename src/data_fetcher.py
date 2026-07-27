@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
 import yfinance as yf
+import streamlit as st
 
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_data(symbol: str = "JPY=X", period_1h: str = "2y", period_1d: str = "5y", raise_errors: bool = False) -> dict[str, pd.DataFrame]:
     """
     Yahoo Financeから価格データを取得し、
@@ -14,7 +16,7 @@ def fetch_data(symbol: str = "JPY=X", period_1h: str = "2y", period_1d: str = "5
     df_1h = None
     if symbol == "JPY=X":
         try:
-            df_1h = yf.download(tickers=symbol, period=period_1h, interval="1h", timeout=30)
+            df_1h = yf.download(tickers=symbol, period=period_1h, interval="1h", timeout=30, progress=False)
             if isinstance(df_1h.columns, pd.MultiIndex):
                 df_1h.columns = df_1h.columns.get_level_values(0)
             if raise_errors and (df_1h is None or df_1h.empty):
@@ -26,7 +28,7 @@ def fetch_data(symbol: str = "JPY=X", period_1h: str = "2y", period_1d: str = "5
             
     # 2. 日足のダウンロード (為替・個別株ともに必要)
     try:
-        df_1d = yf.download(tickers=symbol, period=period_1d, interval="1d", timeout=30)
+        df_1d = yf.download(tickers=symbol, period=period_1d, interval="1d", timeout=30, progress=False)
         if isinstance(df_1d.columns, pd.MultiIndex):
             df_1d.columns = df_1d.columns.get_level_values(0)
         if raise_errors and (df_1d is None or df_1d.empty):
