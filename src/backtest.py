@@ -28,38 +28,51 @@ def _generate_backtest_signals(df: pd.DataFrame, entry_strat: str, exit_strat: s
         is_lagging_bull = df['Close'] > df.get('High_21_ago', df['High'].shift(21))
         is_lagging_bear = df['Close'] < df.get('Low_21_ago', df['Low'].shift(21))
         
+    # ベース戦略とMACD修飾の分離
+    is_macd_filtered = entry_strat.endswith('_MACD')
+    base_entry_strat = entry_strat.replace('_MACD', '') if is_macd_filtered else entry_strat
+    
+    is_macd_exit = exit_strat.endswith('_MACD') or exit_strat == 'EX6'
+    base_exit_strat = exit_strat.replace('_MACD', '') if exit_strat.endswith('_MACD') else exit_strat
+
     # --- 買いエントリー条件 (entry_long) ---
     is_long = pd.Series(False, index=df.index)
-    if entry_strat == 'E1':
+    if base_entry_strat == 'E1':
         is_long = is_lagging_bull
-    elif entry_strat == 'E2':
+    elif base_entry_strat == 'E2':
         is_long = is_lagging_bull & df.get('Close_gt_plus1', False)
-    elif entry_strat == 'E3':
+    elif base_entry_strat == 'E3':
         is_long = is_lagging_bull & df.get('Close_gt_plus2', False)
-    elif entry_strat == 'E4':
+    elif base_entry_strat == 'E4':
         is_long = is_lagging_bull & df.get('Expansion', False)
-    elif entry_strat == 'E5':
+    elif base_entry_strat == 'E5':
         is_long = is_lagging_bull & df.get('Expansion', False) & df.get('Close_gt_plus1', False)
-    elif entry_strat == 'E6':
+    elif base_entry_strat == 'E6':
         is_long = is_lagging_bull & df.get('Expansion', False) & df.get('Close_gt_plus2', False)
+        
+    if is_macd_filtered:
+        is_long = is_long & df.get('macd_gc', False)
         
     # --- 売りエントリー条件 (entry_short) ---
     is_short = pd.Series(False, index=df.index)
-    if entry_strat == 'E1':
+    if base_entry_strat == 'E1':
         is_short = is_lagging_bear
-    elif entry_strat == 'E2':
+    elif base_entry_strat == 'E2':
         is_short = is_lagging_bear & df.get('Close_lt_minus1', False)
-    elif entry_strat == 'E3':
+    elif base_entry_strat == 'E3':
         is_short = is_lagging_bear & df.get('Close_lt_minus2', False)
-    elif entry_strat == 'E4':
+    elif base_entry_strat == 'E4':
         is_short = is_lagging_bear & df.get('Expansion', False)
-    elif entry_strat == 'E5':
+    elif base_entry_strat == 'E5':
         is_short = is_lagging_bear & df.get('Expansion', False) & df.get('Close_lt_minus1', False)
-    elif entry_strat == 'E6':
+    elif base_entry_strat == 'E6':
         is_short = is_lagging_bear & df.get('Expansion', False) & df.get('Close_lt_minus2', False)
 
-    # 21MA同方向フィルターの適用 (EX3, EX5, EX6, EX7が対象)
-    if exit_strat in ['EX3', 'EX5', 'EX6', 'EX7']:
+    if is_macd_filtered:
+        is_short = is_short & df.get('macd_dc', False)
+
+    # 21MA同方向フィルターの適用 (21MA決済を含む EX3, EX5, EX7 およびそのMACD版が対象)
+    if base_exit_strat in ['EX3', 'EX5', 'EX7']:
         is_long = is_long & (df['Close'] > df.get('center_line', df['Close']))
         is_short = is_short & (df['Close'] < df.get('center_line', df['Close']))
 
@@ -72,20 +85,23 @@ def _generate_backtest_signals(df: pd.DataFrame, entry_strat: str, exit_strat: s
     c7 = df.get('Close_lt_21MA', False)
     
     exit_l = pd.Series(False, index=df.index)
-    if exit_strat == 'EX1':
+    if base_exit_strat == 'EX1':
         exit_l = c5
-    elif exit_strat == 'EX2':
+    elif base_exit_strat == 'EX2':
         exit_l = c6
-    elif exit_strat == 'EX3':
+    elif base_exit_strat == 'EX3':
         exit_l = c7
-    elif exit_strat == 'EX4':
+    elif base_exit_strat == 'EX4':
         exit_l = c5 | c6
-    elif exit_strat == 'EX5':
+    elif base_exit_strat == 'EX5':
         exit_l = c5 | c7
-    elif exit_strat == 'EX6':
-        exit_l = c6 | c7
-    elif exit_strat == 'EX7':
+    elif base_exit_strat == 'EX7':
         exit_l = c5 | c6 | c7
+    elif base_exit_strat == 'EX6':
+        exit_l = pd.Series(False, index=df.index)
+        
+    if is_macd_exit:
+        exit_l = exit_l | df.get('macd_dc', False)
         
     # --- 売りエグジット条件 (exit_short) ---
     c8 = is_lagging_bull
@@ -93,20 +109,23 @@ def _generate_backtest_signals(df: pd.DataFrame, entry_strat: str, exit_strat: s
     c10 = df.get('Close_gt_21MA', False)
     
     exit_s = pd.Series(False, index=df.index)
-    if exit_strat == 'EX1':
+    if base_exit_strat == 'EX1':
         exit_s = c8
-    elif exit_strat == 'EX2':
+    elif base_exit_strat == 'EX2':
         exit_s = c9
-    elif exit_strat == 'EX3':
+    elif base_exit_strat == 'EX3':
         exit_s = c10
-    elif exit_strat == 'EX4':
+    elif base_exit_strat == 'EX4':
         exit_s = c8 | c9
-    elif exit_strat == 'EX5':
+    elif base_exit_strat == 'EX5':
         exit_s = c8 | c10
-    elif exit_strat == 'EX6':
-        exit_s = c9 | c10
-    elif exit_strat == 'EX7':
+    elif base_exit_strat == 'EX7':
         exit_s = c8 | c9 | c10
+    elif base_exit_strat == 'EX6':
+        exit_s = pd.Series(False, index=df.index)
+
+    if is_macd_exit:
+        exit_s = exit_s | df.get('macd_gc', False)
 
     df['exit_long'] = exit_l
     df['exit_short'] = exit_s
@@ -277,7 +296,6 @@ def run_backtest(df: pd.DataFrame, entry_strat: str = None, exit_strat: str = No
             elif current_pos == 1:
                 # 買い決済
                 if row['exit_long']:
-                    current_pos = 0
                     exit_price = next_row['Open']
                     profit = (exit_price - entry_price) * volume
                     cumulative_profit += profit
@@ -285,12 +303,20 @@ def run_backtest(df: pd.DataFrame, entry_strat: str = None, exit_strat: str = No
                         "type": "LONG", "entry_time": entry_time, "exit_time": next_idx,
                         "entry_price": entry_price, "exit_price": exit_price, "profit": profit
                     })
-                    sig_to_set = 2
                     profit_to_set = profit
+                    
+                    # 決済と同時に売りエントリー (ドテン)
+                    if row['entry_short']:
+                        current_pos = -1
+                        entry_price = next_row['Open']
+                        entry_time = next_idx
+                        sig_to_set = -1
+                    else:
+                        current_pos = 0
+                        sig_to_set = 2
             elif current_pos == -1:
                 # 売り決済
                 if row['exit_short']:
-                    current_pos = 0
                     exit_price = next_row['Open']
                     profit = (entry_price - exit_price) * volume
                     cumulative_profit += profit
@@ -298,8 +324,17 @@ def run_backtest(df: pd.DataFrame, entry_strat: str = None, exit_strat: str = No
                         "type": "SHORT", "entry_time": entry_time, "exit_time": next_idx,
                         "entry_price": entry_price, "exit_price": exit_price, "profit": profit
                     })
-                    sig_to_set = -2
                     profit_to_set = profit
+                    
+                    # 決済と同時に買いエントリー (ドテン)
+                    if row['entry_long']:
+                        current_pos = 1
+                        entry_price = next_row['Open']
+                        entry_time = next_idx
+                        sig_to_set = 1
+                    else:
+                        current_pos = 0
+                        sig_to_set = -2
                     
         df.iat[i + 1, col_sig] = sig_to_set
         df.iat[i + 1, col_prof] = profit_to_set

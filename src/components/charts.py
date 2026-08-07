@@ -307,6 +307,172 @@ def create_macd_chart(df: pd.DataFrame, title: str = "MACDドテン売買", init
 
     return fig
 
+def create_super_bollinger_macd_chart(df: pd.DataFrame, title: str = "スーパーボリンジャー + MACD", initial_display_candles: int = 64) -> go.Figure:
+    """
+    Plotlyのmake_subplotsを用いて、
+    上段(Row 1)にローソク足、スーパーボリンジャーバンド(センター、シグマ)、遅行スパン、売買シグナル、
+    下段(Row 2)にMACD線・シグナル線・ヒストグラムを描画する統合チャート。
+    """
+    if df is None or df.empty:
+        fig = go.Figure()
+        fig.update_layout(title=f"{title} (データなし)", template="plotly_dark")
+        return fig
+
+    x_strings = _prepare_x_axis_strings(df)
+
+    # サブプロットの作成
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.7, 0.3]
+    )
+
+    # --- 1. 上段: ローソク足 ---
+    fig.add_trace(go.Candlestick(
+        x=x_strings,
+        open=df['Open'],
+        high=df['High'],
+        low=df['Low'],
+        close=df['Close'],
+        name="価格",
+        increasing_line_color="#ef5350",
+        decreasing_line_color="#42a5f5"
+    ), row=1, col=1)
+
+    # スーパーボリンジャーのバンド描画
+    fill_colors = {
+        3: "rgba(156, 39, 176, 0.05)",
+        2: "rgba(33, 150, 243, 0.08)",
+        1: "rgba(76, 175, 80, 0.12)"
+    }
+    line_colors = {
+        3: "rgba(156, 39, 176, 0.4)",
+        2: "rgba(33, 150, 243, 0.5)",
+        1: "rgba(76, 175, 80, 0.6)"
+    }
+
+    if 'center_line' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=x_strings, y=df['center_line'],
+            line=dict(color="#ffeb3b", width=1.5),
+            name="21SMA (センター)"
+        ), row=1, col=1)
+        
+        for sigma in [3, 2, 1]:
+            col_p = f'plus_{sigma}sigma'
+            col_m = f'minus_{sigma}sigma'
+            
+            if col_p in df.columns and col_m in df.columns:
+                fig.add_trace(go.Scatter(
+                    x=x_strings, y=df[col_p],
+                    line=dict(color=line_colors[sigma], width=0.8, dash='dot'),
+                    name=f"+{sigma}σ"
+                ), row=1, col=1)
+                fig.add_trace(go.Scatter(
+                    x=x_strings, y=df[col_m],
+                    line=dict(color=line_colors[sigma], width=0.8, dash='dot'),
+                    fill='tonexty',
+                    fillcolor=fill_colors[sigma],
+                    name=f"-{sigma}σ"
+                ), row=1, col=1)
+
+    # 遅行スパン
+    if 'chikou_span' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=x_strings, y=df['chikou_span'],
+            line=dict(color="#e91e63", width=1.5),
+            name="遅行スパン"
+        ), row=1, col=1)
+
+    # 売買シグナルマーカー
+    _add_signal_markers(fig, df, x_strings, row=1, col=1)
+
+    # --- 2. 下段: MACD ---
+    if 'macd' in df.columns and 'macd_signal' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=x_strings, y=df['macd'],
+            line=dict(color="#ffeb3b", width=1.5),
+            name="MACD"
+        ), row=2, col=1)
+        
+        fig.add_trace(go.Scatter(
+            x=x_strings, y=df['macd_signal'],
+            line=dict(color="#e91e63", width=1.5),
+            name="Signal"
+        ), row=2, col=1)
+        
+    if 'macd_hist' in df.columns:
+        colors = np.where(df['macd_hist'] >= 0, '#ef5350', '#42a5f5')
+        fig.add_trace(go.Bar(
+            x=x_strings, y=df['macd_hist'],
+            marker_color=colors,
+            name="Hist"
+        ), row=2, col=1)
+
+    # レイアウト設定
+    fig.update_layout(
+        title=title,
+        template="plotly_dark",
+        xaxis_rangeslider_visible=False,
+        height=500,
+        margin=dict(l=20, r=20, t=40, b=20),
+        showlegend=False,
+        dragmode='pan',
+        xaxis=dict(
+            type='category',
+            categoryorder='array',
+            categoryarray=x_strings,
+            nticks=8
+        ),
+        xaxis2=dict(
+            type='category',
+            categoryorder='array',
+            categoryarray=x_strings,
+            nticks=8
+        )
+    )
+
+    # ウィンドウ表示制限とオートスケール
+    if len(df) > 0:
+        display_count = min(len(df), initial_display_candles)
+        sub_df = df.iloc[-display_count:]
+        
+        start_idx = len(df) - display_count
+        end_idx = len(df) - 1
+        
+        fig.update_xaxes(range=[start_idx - 0.5, end_idx + 0.5])
+        
+        # 上段のY軸範囲調整
+        y_max_list = [sub_df['High'].max()]
+        y_min_list = [sub_df['Low'].min()]
+        if 'plus_3sigma' in sub_df.columns:
+            y_max_list.append(sub_df['plus_3sigma'].max())
+        if 'minus_3sigma' in sub_df.columns:
+            y_min_list.append(sub_df['minus_3sigma'].min())
+        if 'chikou_span' in sub_df.columns:
+            chk_max = sub_df['chikou_span'].max()
+            chk_min = sub_df['chikou_span'].min()
+            if not pd.isna(chk_max):
+                y_max_list.append(chk_max)
+            if not pd.isna(chk_min):
+                y_min_list.append(chk_min)
+                
+        y_max = max(y_max_list)
+        y_min = min(y_min_list)
+        margin = (y_max - y_min) * 0.05
+        fig.update_yaxes(range=[y_min - margin, y_max + margin], row=1, col=1)
+        
+        # 下段のY軸範囲調整
+        if 'macd' in sub_df.columns:
+            m_max = max(sub_df['macd'].max(), sub_df['macd_signal'].max(), sub_df['macd_hist'].max())
+            m_min = min(sub_df['macd'].min(), sub_df['macd_signal'].min(), sub_df['macd_hist'].min())
+            if not (pd.isna(m_max) or pd.isna(m_min)):
+                m_margin = (m_max - m_min) * 0.05
+                fig.update_yaxes(range=[m_min - m_margin, m_max + m_margin], row=2, col=1)
+
+    return fig
+
 if __name__ == "__main__":
     import sys
     import os

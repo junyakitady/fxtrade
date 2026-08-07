@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from data_fetcher import fetch_data
 from indicator import calculate_super_bollinger, calculate_macd
 from backtest import run_backtest
-from components.charts import create_super_bollinger_chart, create_macd_chart
+from components.charts import create_super_bollinger_chart, create_macd_chart, create_super_bollinger_macd_chart
 
 st.set_page_config(
     page_title="スーパーボリンジャー トレードエージェント",
@@ -21,37 +21,37 @@ def load_and_process_data():
     data = fetch_data(period_1h="2y", period_1d="5y")
     results = {}
     
-    # 1時間足データの処理 (スーパーボリンジャーおよびMACD)
+    # 1時間足
     df_1h = data.get("1h")
     if df_1h is not None and not df_1h.empty:
         df_ind_1h = calculate_super_bollinger(df_1h)
-        # E6 + EX2 (厳選・低DDモデル)
-        results["1h"] = run_backtest(df_ind_1h, timeframe="1h_e6_ex2", volume=10000)
+        df_ind_1h = calculate_macd(df_ind_1h)
+        results["1h"] = run_backtest(df_ind_1h, entry_strat="E5", exit_strat="EX5_MACD", lagging_type="high_low", volume=10000)
         
         # 1時間足 MACDドテン売買
-        df_macd_1h = calculate_macd(df_1h)
-        results["1h_macd"] = run_backtest(df_macd_1h, timeframe="1h_macd_doten", volume=10000)
+        results["1h_macd"] = run_backtest(df_ind_1h, entry_strat="MACD_DOTEN", exit_strat="MACD_DOTEN", lagging_type="none", volume=10000)
     else:
         results["1h"] = None
         results["1h_macd"] = None
         
-    # 日足データの処理
+    # 日足
     df_1d = data.get("1d")
     if df_1d is not None and not df_1d.empty:
         df_ind_1d = calculate_super_bollinger(df_1d)
-        # E2 + EX5 (エクスパンションなし)
-        results["1d"] = run_backtest(df_ind_1d, timeframe="1d_e2_ex5", volume=10000)
+        df_ind_1d = calculate_macd(df_ind_1d)
+        results["1d"] = run_backtest(df_ind_1d, entry_strat="E2", exit_strat="EX5", lagging_type="high_low", volume=10000)
     else:
         results["1d"] = None
         
+    # GOOG日足
     try:
         goog_data = fetch_data(symbol="GOOG", period_1d="5y", raise_errors=True)
         df_goog = goog_data.get("1d")
         if df_goog is not None and not df_goog.empty:
             df_clean = df_goog[['Open', 'High', 'Low', 'Close']].dropna()
             df_ind_goog = calculate_super_bollinger(df_clean)
-            res_goog = run_backtest(df_ind_goog, timeframe="goog_e4_ex5", volume=100)
-            results["GOOG"] = res_goog
+            df_ind_goog = calculate_macd(df_ind_goog)
+            results["GOOG"] = run_backtest(df_ind_goog, entry_strat="E6", exit_strat="EX5", lagging_type="high_low", volume=100)
         else:
             results["GOOG"] = None
     except Exception:
@@ -122,7 +122,7 @@ def render_signal_badge(tf_name: str, res: dict, entry_desc: str = "", exit_desc
     if exit_desc:
         st.markdown(
             f"<div style='color:#b0bec5; font-size:0.85em; margin-left:1rem; margin-bottom:0.6rem;'>"
-            f"↳ エグジッド: {exit_desc}"
+            f"↳ エグジット: {exit_desc}"
             f"</div>",
             unsafe_allow_html=True
         )
@@ -140,9 +140,9 @@ def render_dashboard():
             st.markdown("#### 各戦略のステータスと適用ロジック")
             
             strategy_descriptions = {
-                "1h": {"entry_desc": "遅行スパン陽転 & バンド拡大 & ±2σ 越え", "exit_desc": "±1σ割れ"},
+                "1h": {"entry_desc": "遅行スパン陽転 & バンド拡大 & 終値 > +1σ", "exit_desc": "遅行スパン陰転 or 21MA割れ or MACD逆クロス"},
                 "1h_macd": {"entry_desc": "MACDゴールデンクロス (買いドテン)", "exit_desc": "MACDデッドクロス (売りドテン)"},
-                "1d": {"entry_desc": "遅行スパン陽転 & ±1σ 越え", "exit_desc": "遅行スパン陰転 or 21MA割れ"}
+                "1d": {"entry_desc": "遅行スパン陽転 & 終値 > +1σ", "exit_desc": "遅行スパン陰転 or 21MA割れ"}
             }
             
             render_signal_badge("1時間足 (スーパーボリンジャー)", results.get("1h"), **strategy_descriptions["1h"])
@@ -152,12 +152,11 @@ def render_dashboard():
             st.markdown("---")
             
             summary_rows = []
-            for tf_code, tf_label in [("1h", "1H スーパーボリンジャー"), ("1h_macd", "1H MACDドテン"), ("1d", "日足 スーパーボリンジャー")]:
+            for tf_code, tf_label in [("1h", "1時間足 (スーパーボリンジャー)"), ("1h_macd", "1時間足 (MACDドテン)"), ("1d", "日足 (スーパーボリンジャー)")]:
                 r = results.get(tf_code)
                 if r:
                     pos = r['current_position']
                     sig_str = "🟢 買い保有中" if pos == 1 else "🔴 売り保有中" if pos == -1 else "⚪ ノーポジション"
-                    # ドテンはロングかショートのみなので、買い売りの内訳やノーポジション表記は通常通り
                     l_cnt = r.get('long_trades', 0)
                     s_cnt = r.get('short_trades', 0)
                     
@@ -176,15 +175,14 @@ def render_dashboard():
                     })
                     
             df_summary = pd.DataFrame(summary_rows)
-            # 表側からは戦略列を除去し、横幅をスッキリ確保
             st.dataframe(df_summary, hide_index=True, width='stretch')
             
     with row1_col2:
-        st.subheader("🕒 1時間足 スーパーボリンジャー")
+        st.subheader("🕒 1時間足 (スーパーボリンジャー)")
         with st.container(border=True):
             res_1h = results.get("1h")
             if res_1h:
-                fig_1h = create_super_bollinger_chart(res_1h['df_result'], "")
+                fig_1h = create_super_bollinger_chart(res_1h['df_result'], "1時間足 スーパーボリンジャー")
                 st.plotly_chart(fig_1h, width='stretch')
             else:
                 st.info("データがありません。")
@@ -197,21 +195,21 @@ def render_dashboard():
         with st.container(border=True):
             res_macd = results.get("1h_macd")
             if res_macd:
-                fig_macd = create_macd_chart(res_macd['df_result'], "")
+                fig_macd = create_macd_chart(res_macd['df_result'], "1時間足 MACDドテン売買")
                 st.plotly_chart(fig_macd, width='stretch')
             else:
                 st.info("データがありません。")
                 
     with row2_col2:
-        st.subheader("📅 日足 スーパーボリンジャー")
+        st.subheader("📅 日足 (スーパーボリンジャー)")
         with st.container(border=True):
             res_1d = results.get("1d")
             if res_1d:
-                fig_1d = create_super_bollinger_chart(res_1d['df_result'], "")
+                fig_1d = create_super_bollinger_chart(res_1d['df_result'], "日足 スーパーボリンジャー")
                 st.plotly_chart(fig_1d, width='stretch')
             else:
                 st.info("データがありません。")
-
+ 
     st.markdown("<br><hr>", unsafe_allow_html=True)
     st.subheader("🇺🇸 米国個別株 トレンド分析 (GOOG)")
     
@@ -224,7 +222,7 @@ def render_dashboard():
                 st.markdown("#### GOOG 日足ステータス")
                 
                 strategy_descriptions_goog = {
-                    "entry_desc": "遅行スパン陽転（終値比較） & バンド拡大",
+                    "entry_desc": "遅行スパン陽転（終値比較） & バンド拡大 & 終値 > +1σ",
                     "exit_desc": "遅行スパン陰転（終値比較） or 21MA割れ"
                 }
                 
@@ -244,7 +242,7 @@ def render_dashboard():
                 st.dataframe(df_g_summary, hide_index=True, width='stretch')
                     
             with col_g_chart:
-                fig_goog = create_super_bollinger_chart(res_goog['df_result'], "")
+                fig_goog = create_super_bollinger_chart(res_goog['df_result'], "GOOG 日足 スーパーボリンジャー")
                 st.plotly_chart(fig_goog, width='stretch')
         else:
             st.info("GOOGデータがありません。")
